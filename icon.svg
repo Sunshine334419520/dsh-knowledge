@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="知识库">
+  <defs>
+    <linearGradient id="kb-g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22b8a6"/>
+      <stop offset="1" stop-color="#0d7a6f"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#kb-g)"/>
+  <path d="M16 14h26a4 4 0 0 1 4 4v32a4 4 0 0 1-4 4H16V14Z" fill="none" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M22 14v40" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M28 24h12M28 31h12M28 38h8" stroke="#c7fff4" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M14 20h4M14 30h4M14 40h4" stroke="#9ff3e6" stroke-width="3" stroke-linecap="round"/>
+</svg>
