@@ -1,57 +1,132 @@
-# dsh-knowledge
+<p align="center"><img src="icon.svg" width="72" height="72" alt="知识库插件图标"></p>
 
-DeepSeek Harness（DSH）的知识库插件：用本地目录保存资料，用 Git 记录版本，在对话里通过 `@kb:` 引用、保存和读写。
+<h1 align="center">知识库 · @local/dsh-knowledge-base</h1>
 
-## 功能
+<p align="center"><b>把本地目录变成 DeepSeek Harness 的知识库：左栏浏览、右栏预览，对话里用 <code>@kb:</code> 引用，回复一键回写。</b></p>
 
-- **本地知识库**：每个库就是一个普通文件夹，自带 `inbox / notes / projects / assets / templates` 五个分区。
-- **Git 版本管理**：建库时自动 `git init`，可配置远端仓库；插件内置提交 / 同步状态提示。
-- **左栏知识库面板**：文件树、彩色类型图标、右键菜单（新建 / 上传 / 重命名 / 删除 / 复制引用）、Markdown 预览与编辑、全文搜索。
-- **右侧栏浏览页**：右栏「开始」页提供「知识库」入口，可直接逐级浏览和预览文件。
-- **`@kb:` 引用**：在输入框输入 `@kb:关键词`，跨所有库模糊匹配文件与目录，选中后插入 `@kb:<库名>/<路径>`。
-- **对话保存**：助手回复下方「保存到知识库」，把回复正文加 front-matter 存进库，支持 30 秒撤销。
-- **模型工具**：`kb_list` / `kb_read` / `kb_search` / `kb_write` / `kb_append` / `kb_create` / `kb_move` / `kb_delete` / `kb_find`。
+<div align="center">
+
+[简体中文](README.md) · [English](README.en.md) · [预览](#预览) · [安装](#安装) · [GitHub](https://github.com/Sunshine334419520/dsh-knowledge)
+
+![DSH 插件](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4176e6)
+![许可证](https://img.shields.io/badge/license-MIT-green)
+
+</div>
+
+> 面向 DeepSeek Harness 的社区插件，不是 DeepSeek 官方产品。
+
+## 预览
+
+![知识库面板、@kb 引用与右栏预览：左侧是文件树与 Git 状态，中间对话引用了 notes/周会话纪要.md，右侧是最近修改与 front-matter 预览](docs/preview.png)
+
+> 效果示意（HTML 模拟，非真实截图）：A 左栏面板 · B 对话引用与「保存到知识库」 · C 右栏浏览页。
+
+## 特性
+
+- **库就是一个目录**：普通文件夹加五个种子分区（`inbox` / `notes` / `projects` / `assets` / `templates`），没有私有格式；已经有内容的目录可以直接接管。
+- **Git 只做版本，不当门槛**：建库时自动 `git init -b main`，面板底部实时显示「N 个改动」，一键提交；配了远端就一键同步。
+- **对话里进出都有路**：输入 `@kb:` 搜文件名与正文，选中插入 `@kb:<库名>/<路径>`；助手回复下方「保存到知识库」把正文加 front-matter 写回，30 秒内可撤销。
+- **九个模型工具**：`kb_list` / `kb_find` / `kb_read` / `kb_search` / `kb_write` / `kb_append` / `kb_create` / `kb_move` / `kb_delete`；写入必须带 `expectedHash`，避免覆盖别人的改动。
+
+## 它改变什么，不改变什么
+
+| 改变 | 不改变 |
+| --- | --- |
+| 左栏多一个「知识库」面板，右栏多一个「知识库」标签页 | 文件仍是普通 Markdown 与目录结构，卸掉插件照常读 |
+| 对话区多一个 `@kb:` 引用源和一个「保存到知识库」动作 | 不加系统依赖、不起后台服务、不动模型配置 |
+| 库目录里多一个 `.kb/`（身份标记与回收站） | `.kb/` 被库内 `.gitignore` 排除，不会提交进你的仓库 |
 
 ## 安装
 
-本插件以 DSH bundle 形式工作，在当前 profile 中安装：
+### 命令行
 
 ```bash
-dsh plugin install-bundle link:D:/path/to/dsh-knowledge
+dsh plugin --profile desktop add github:Sunshine334419520/dsh-knowledge
 ```
 
-或在 profile 的 `package.json` 里加入：
+把 `desktop` 换成你实际使用的 profile 名。装完刷新页面（桌面版重启应用），左栏就会出现「知识库」面板。
 
-```json
-"@local/dsh-knowledge-base": "link:D:/path/to/dsh-knowledge"
+### 从源码
+
+```bash
+git clone https://github.com/Sunshine334419520/dsh-knowledge.git
+cd dsh-knowledge
+dsh plugin --profile desktop add "$PWD"
 ```
 
-## 目录结构
+没有构建步骤：改 `client.js` 刷新页面生效，改 `index.js` 与 `lib/` 需要重启应用。
+
+## 使用
+
+1. 左栏「知识库」面板点 **+**，填名称与**父目录**（可选填云端 Git 地址）。有远端时库目录自动取「父目录/仓库名」，也可以手改；没有远端就直接在父目录里建库。目录不存在会创建；空目录就地初始化；已有内容但还不是知识库的目录默认拒绝，高级选项里可以接管或允许合并无关历史；远端已有内容时自动克隆，而不是凭空新建一段历史。
+2. 用 **新建文档 / 新建文件夹 / 上传文件** 组织内容；文件右键可重命名、删除、复制引用。
+3. 在输入框敲 `@kb:`，从搜索结果里选文件，消息中会插入 `@kb:工作笔记/notes/周会话纪要.md`。
+4. 助手回复下方点 **保存到知识库**，选库与相对路径；正文会带 front-matter 写入，30 秒内点「撤销」可撤回。
+5. 面板底部看 Git 状态：**提交** 只记本地，**同步** 依次做提交 → 合并远端 → 推送。建库时没连上云端（没令牌、断网、远端还没建）会显示 **云端未初始化**，点一下补做首推。
+
+> 二进制文件（PDF、图片、音视频）可以打开与下载，但没有文本预览。删除的文件进 `.kb/trash/<时间戳>/`，文件树里看不到。
+
+## 设置
+
+| 项 | 默认 | 说明 |
+| --- | --- | --- |
+| 库注册表 | `<DSH_PROFILE_DIR>/knowledge-base/libraries.json` | 记录的库目录、id 与远端地址；删库只摘注册表，可选连文件一起删 |
+| 库身份标记 | `<库>/.kb/config.json` | `id` / `name` / `remote` / `createdAt`；目录被移动后仍能认出是同一个库 |
+| 回收站 | `<库>/.kb/trash/<时间戳>/` | 删除是移动，不是抹掉；回收站只在本机，不进版本库 |
+| `.kb/` 是否入库 | 否 | 整个 `.kb/` 写进库根 `.gitignore`；从旧版本克隆下来的库，建库时会把它从 Git 索引里摘掉 |
+| `debug` | 关闭 | 打开后宿主半在控制台打印错误与耗时 |
+
+## 兼容与限制
+
+- 宿主：DSH 桌面版（macOS / Windows）与浏览器版；Git 2.x。
+- 单文件读取上限 2 MiB，上传上限 32 MiB；超出后只能下载，不能在线编辑。
+- 私有 HTTPS 仓库的令牌按顺序查找：DSH 凭据服务（`DSH_KB_GITHUB_TOKEN` / `DSH_KB_GITLAB_TOKEN` / `DSH_KB_GIT_TOKEN`）→ 环境变量（`GITHUB_TOKEN`、`GH_TOKEN`、`GITLAB_TOKEN` 等）。令牌不进 remote URL、不进命令行参数；SSH 地址直接用本机 ssh 配置。
+- 建库按远端状态分两路：远端为空 → 本地初始化并首推（分支固定 `main`）；远端已有内容 → 先克隆到 `<父目录>/.kb-staging-*` 再落位，保留远端历史与默认分支。远端探不通时只建本地库，之后用「云端未初始化」补推。
+- 令牌可以在「新建知识库」对话框里直接保存（写入 DSH 凭据服务），保存前先用 `git ls-remote` 验证；只有读权限时会提示"可读但推不上去"。
+- 同步不做 rebase：远端有新提交时走合并；两边历史互不相关时默认拒绝合并，需要显式允许；冲突时自动 `merge --abort`，工作区保持干净。
+- 文件树一次渲染一整棵，没有分页；几万个文件的库会明显变慢。
+
+## 排错
+
+| 症状 | 修法 |
+| --- | --- |
+| 左栏没有「知识库」 | 确认 profile 的 `dsh.profile.bundles` 里有这个包，再 `dsh plugin --profile desktop add …` 后刷新页面 |
+| 「这个库没有 Git 仓库」 | 建库时没勾「用 Git 管理版本」；删除重建，或在库目录手动 `git init -b main` |
+| 同步报鉴权失败 | 私有仓库要令牌：设置 `GITHUB_TOKEN` 或对应的 `DSH_KB_*`；HTTPS 地址里不要带密码 |
+| 保存后文件树没变 | 点面板刷新；找不到文件说明刚点过「撤销」，去 `.kb/trash/` 里找 |
+
+## 开发
+
+```bash
+git clone https://github.com/Sunshine334419520/dsh-knowledge.git
+cd dsh-knowledge
+dsh plugin --profile desktop add "$PWD"
+```
+
+- 无构建步骤。`client.js` 是浏览器模块，`index.js` 与 `lib/*.mjs` 是 Node ESM。
+- `index.js` 注册 HTTP 路由、九个模型工具与提示词；`lib/api.mjs` 是路由实现；`lib/store.mjs` 管注册表与文件读写；`lib/git.mjs` 封装 Git 命令；`client.js` 是面板与交互。
+
+## 许可证
+
+MIT，见 [LICENSE](https://github.com/Sunshine334419520/dsh-knowledge/blob/main/LICENSE)。
+
+## 文件清单
 
 ```
 dsh-knowledge/
-├── package.json        # bundle 声明（exports / dsh.bundle / dsh.client）
-├── cordis.patch.yml    # Loader 插入行
-├── index.js            # 宿主半：HTTP 路由、模型工具、提示词
+├── package.json        # bundle 声明：exports / dsh.bundle / dsh.client / files
+├── cordis.patch.yml    # Loader 插入行（id: knowledge-base）
+├── index.js            # 宿主半：路由、模型工具、提示词
 ├── lib/
-│   ├── api.mjs         # HTTP 路由实现
-│   ├── store.mjs       # 库注册表、文件读写、搜索、Git
-│   └── git.mjs         # Git 命令封装
-├── client.js           # 客户端半：面板、@kb 源、右栏页、保存动作
+│   ├── api.mjs         # /api/kb/* 路由实现
+│   ├── store.mjs       # 注册表、文件读写、搜索、同步
+│   ├── git.mjs         # Git 命令封装与错误归类
+│   ├── paths.mjs       # 远端地址解析、目录名清洗
+│   ├── credentials.mjs # 访问令牌的读取与脱敏
+│   └── askpass.sh      # GIT_ASKPASS 垫片（只回令牌，不进日志）
+├── client.js           # 客户端半：左栏面板、@kb 源、右栏页、保存动作
 ├── locale/             # zh / en 文案
+├── docs/preview.png    # 本页示意图
+├── tests/              # 建库 / 同步 / 凭据 / 路由的 Node 测试
 └── icon.svg
 ```
-
-## 数据位置
-
-库注册表默认保存在：
-
-```
-<DSH_PROFILE_DIR|DSH_HOME|~/.dsh>/knowledge-base/libraries.json
-```
-
-删除文件会移到库内 `.kb/trash/<时间戳>/`，可从 Git 历史或回收目录恢复。
-
-## License
-
-MIT

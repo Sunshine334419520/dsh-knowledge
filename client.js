@@ -611,11 +611,48 @@ window.__ModuleLoader__.load({
     function CreateLibraryDialog({ onClose, onCreated }) {
       const uiWorkspace = useMemo(() => safeGet('uiWorkspace'), []);
       const [name, setName] = useState('');
-      const [root, setRoot] = useState('');
+      const [parent, setParent] = useState('');
+      const [folder, setFolder] = useState('');
       const [remote, setRemote] = useState('');
       const [git, setGit] = useState(true);
+      const [adopt, setAdopt] = useState(false);
+      const [mergeUnrelated, setMergeUnrelated] = useState(false);
       const [busy, setBusy] = useState(false);
       const [error, setError] = useState('');
+      const [cred, setCred] = useState(null);
+      const [token, setToken] = useState('');
+      const [tokenBusy, setTokenBusy] = useState(false);
+
+      const remoteText = remote.trim();
+      const isHttp = /^https?:\/\//i.test(remoteText);
+      const isSsh = /^(ssh:\/\/|git@|[a-z0-9_-]+@[^:]+:)/i.test(remoteText) && !isHttp;
+      const lastSegment = (value) => value.split(/[\\/]/).filter(Boolean).pop() ?? '';
+      const dirName = useMemo(
+        () => folder.trim() || lastSegment(remoteText).replace(/\.git$/i, ''),
+        [folder, remoteText],
+      );
+      const sep = parent.trim().endsWith('/') || parent.trim().endsWith('\\') ? '' : '/';
+      const preview = parent.trim() && dirName ? `${parent.trim()}${sep}${dirName}` : '';
+
+      useEffect(() => {
+        if (!isHttp) {
+          setCred(null);
+          return;
+        }
+        let alive = true;
+        const timer = setTimeout(async () => {
+          try {
+            const payload = await getJson(`/api/kb/credentials?remote=${encodeURIComponent(remoteText)}`);
+            if (alive) setCred(payload);
+          } catch {
+            if (alive) setCred(null);
+          }
+        }, 400);
+        return () => {
+          alive = false;
+          clearTimeout(timer);
+        };
+      }, [remoteText, isHttp]);
 
       const pick = async () => {
         if (!uiWorkspace?.pickDirectory) {
@@ -625,7 +662,7 @@ window.__ModuleLoader__.load({
         try {
           const picked = await uiWorkspace.pickDirectory();
           if (picked) {
-            setRoot(picked);
+            setParent(picked);
             if (!name) setName(baseName(picked) || '知识库');
           }
         } catch (cause) {
@@ -633,23 +670,40 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const submit = async () => {
-        if (!name.trim()) {
-          setError('给知识库起个名字。');
+      const saveToken = async () => {
+        if (!token.trim()) {
+          setError('先把访问令牌粘进来。');
           return;
         }
-        if (!root.trim()) {
-          setError('本地目录不能为空。');
+        setTokenBusy(true);
+        setError('');
+        try {
+          const payload = await postJson('/api/kb/credentials', { remote: remoteText, token: token.trim() });
+          setCred({ ...(cred ?? {}), token: payload.token, remote: payload.remote ?? cred?.remote, probe: payload.probe });
+          setToken('');
+        } catch (cause) {
+          setError(errorText(cause));
+        } finally {
+          setTokenBusy(false);
+        }
+      };
+
+      const submit = async () => {
+        if (!parent.trim()) {
+          setError('先选一个本地父目录。');
           return;
         }
         setBusy(true);
         setError('');
         try {
           const result = await postJson('/api/kb/libraries', {
-            name: name.trim(),
-            root: root.trim(),
-            remote: remote.trim(),
+            name: name.trim() || undefined,
+            parent: parent.trim(),
+            folder: folder.trim() || undefined,
+            remote: remoteText,
             git,
+            adopt,
+            mergeUnrelated,
           });
           onCreated?.(result);
         } catch (cause) {
@@ -658,6 +712,9 @@ window.__ModuleLoader__.load({
           setBusy(false);
         }
       };
+
+      const tokenConfigured = cred?.token?.configured === true;
+      const systemReady = cred?.system?.available === true;
 
       return h(
         Modal,
@@ -669,7 +726,7 @@ window.__ModuleLoader__.load({
           h('input', {
             className: 'kb-input',
             value: name,
-            placeholder: '例如：工作笔记',
+            placeholder: dirName ? `默认：${dirName}` : '例如：工作笔记',
             onChange: (event) => setName(event.target.value),
             autoFocus: true,
           }),
@@ -677,19 +734,31 @@ window.__ModuleLoader__.load({
         h(
           'label',
           { className: 'kb-field' },
-          '本地目录',
+          '本地父目录',
           h(
             'div',
             { style: { display: 'flex', gap: '6px' } },
             h('input', {
               className: 'kb-input',
-              value: root,
-              placeholder: 'D:\\notes\\work',
-              onChange: (event) => setRoot(event.target.value),
+              value: parent,
+              placeholder: '~/notes',
+              onChange: (event) => setParent(event.target.value),
             }),
             h('button', { className: 'kb-btn', onClick: pick, type: 'button' }, '选择…'),
           ),
-          h('span', { className: 'kb-hint' }, '目录可以已存在（会接管并初始化 .kb/），不存在会创建。'),
+          h('span', { className: 'kb-hint' }, '知识库会建在这个目录下的「仓库名」文件夹里，不用自己先建目录。'),
+        ),
+        h(
+          'label',
+          { className: 'kb-field' },
+          '目录名（可选）',
+          h('input', {
+            className: 'kb-input',
+            value: folder,
+            placeholder: dirName || '取自仓库名',
+            onChange: (event) => setFolder(event.target.value),
+          }),
+          preview ? h('span', { className: 'kb-hint' }, `将创建：${preview}`) : null,
         ),
         h(
           'label',
@@ -698,16 +767,88 @@ window.__ModuleLoader__.load({
           h('input', {
             className: 'kb-input',
             value: remote,
-            placeholder: 'git@github.com:me/notes.git',
+            placeholder: 'https://github.com/me/notes.git',
             onChange: (event) => setRemote(event.target.value),
           }),
-          h('span', { className: 'kb-hint' }, '留空则只用本地 Git 管理，不联网。'),
+          h(
+            'span',
+            { className: 'kb-hint' },
+            isSsh
+              ? 'SSH 地址走本机 ssh 配置，不需要令牌。'
+              : '留空则只用本地 Git；填了地址会自动拉取已有内容，或把本地库首推到远端。',
+          ),
         ),
+        isHttp && cred
+          ? h(
+              'div',
+              { style: { display: 'grid', gap: '6px' } },
+              h(
+                'span',
+                { className: cx('kb-chip', tokenConfigured || systemReady ? 'ok' : 'warn') },
+                tokenConfigured
+                  ? `令牌已保存（${cred.token?.masked ?? '已配置'}）`
+                  : systemReady
+                    ? `将使用系统 Git 凭据${cred.system?.username ? `（${cred.system.username}）` : ''}`
+                    : '还没有这个仓库的访问令牌',
+              ),
+              !tokenConfigured
+                ? h(
+                    'div',
+                    { style: { display: 'flex', gap: '6px' } },
+                    h('input', {
+                      className: 'kb-input',
+                      type: 'password',
+                      value: token,
+                      placeholder: '粘贴访问令牌（保存后不回显）',
+                      onChange: (event) => setToken(event.target.value),
+                    }),
+                    h(
+                      'button',
+                      { className: 'kb-btn', onClick: saveToken, type: 'button', disabled: tokenBusy || busy },
+                      tokenBusy ? '验证中…' : '保存令牌',
+                    ),
+                  )
+                : null,
+              h(
+                'span',
+                { className: 'kb-hint' },
+                cred.token?.hint ?? '',
+                cred.remote?.tokenUrl
+                  ? h(
+                      'a',
+                      { href: cred.remote.tokenUrl, target: '_blank', rel: 'noreferrer', style: { marginLeft: '6px' } },
+                      '去创建令牌',
+                    )
+                  : null,
+              ),
+            )
+          : null,
         h(
           'label',
           { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px' } },
           h('input', { type: 'checkbox', checked: git, onChange: (event) => setGit(event.target.checked) }),
           '用 Git 管理版本（推荐）',
+        ),
+        h(
+          'details',
+          { style: { fontSize: '12px', color: 'var(--dsh-text-3, #888)' } },
+          h('summary', { style: { cursor: 'pointer' } }, '高级选项'),
+          h(
+            'label',
+            { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px' } },
+            h('input', { type: 'checkbox', checked: adopt, onChange: (event) => setAdopt(event.target.checked) }),
+            '目录已存在且非空时接管它（不删文件）',
+          ),
+          h(
+            'label',
+            { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' } },
+            h('input', {
+              type: 'checkbox',
+              checked: mergeUnrelated,
+              onChange: (event) => setMergeUnrelated(event.target.checked),
+            }),
+            '允许合并与本地无关的远端历史',
+          ),
         ),
         error ? h('div', { className: 'kb-dialog-error' }, error) : null,
         h(
@@ -1378,9 +1519,31 @@ window.__ModuleLoader__.load({
             notify(payload.committed ? '已提交' : '没有需要提交的变更');
           } else {
             const payload = await postJson('/api/kb/git', { lib: activeId, action: 'sync' });
-            if (payload.ok === false) notify(`${payload.stage === 'pull' ? '拉取' : '推送'}失败：${payload.message}`, 'error');
-            else notify(payload.committed ? '已同步（含新提交）' : '已同步');
+            if (payload.ok === false) {
+              const stage = { probe: '连接远端', fetch: '拉取', merge: '合并', diverge: '合并', push: '推送' }[payload.stage] ?? '同步';
+              notify(`${stage}失败：${payload.message ?? payload.code}`, 'error');
+            } else {
+              notify(payload.merged ? '已同步（合并了远端改动）' : payload.committed ? '已同步（含新提交）' : '已同步');
+            }
           }
+          loadLibraries();
+          loadGit(activeId);
+        } catch (cause) {
+          notify(errorText(cause), 'error');
+        }
+      };
+
+      /** 本地库已建好、云端还没初始化（首推失败或当时没联网）时的补救入口。 */
+      const bootstrapRemote = async () => {
+        try {
+          const payload = await postJson('/api/kb/libraries/bootstrap', { lib: activeId });
+          if (payload.ok === false) {
+            const stage = { probe: '连接远端', fetch: '拉取', merge: '合并', push: '推送' }[payload.stage] ?? '初始化';
+            notify(`${stage}失败：${payload.message ?? payload.code}`, 'error');
+          } else {
+            notify(payload.warning ? `已推到云端。${payload.warning}` : '已推到云端');
+          }
+          loadLibraries();
           loadGit(activeId);
         } catch (cause) {
           notify(errorText(cause), 'error');
@@ -1572,6 +1735,18 @@ window.__ModuleLoader__.load({
           ? h('span', { className: cx('kb-chip', status.dirty ? 'warn' : 'ok') }, status.dirty ? `${status.dirty} 项变更` : '已提交')
           : null,
         status?.repo && status.branch ? h('span', { className: 'kb-chip' }, status.branch) : null,
+        active?.git?.needsPush
+          ? h(
+              'button',
+              {
+                className: 'kb-chip warn',
+                type: 'button',
+                title: '本地提交还没推到云端，点一下初始化远端',
+                onClick: bootstrapRemote,
+              },
+              '云端未初始化',
+            )
+          : null,
         h('span', { className: 'kb-spacer' }),
         h(
           'div',
@@ -1783,11 +1958,21 @@ window.__ModuleLoader__.load({
         dialog?.type === 'library'
           ? h(CreateLibraryDialog, {
               onClose: () => setDialog(null),
-              onCreated: async () => {
+              onCreated: async (result) => {
                 setDialog(null);
                 const payload = await loadLibraries();
                 if (payload?.libraries?.length) setActiveId(payload.libraries[payload.libraries.length - 1].id);
-                notify('知识库已创建');
+                const notes = [];
+                let tone;
+                if (result?.target?.dirChanged) notes.push(`目录名整理为「${result.target.dir}」`);
+                if (result?.bootstrap && result.bootstrap.ok === false) {
+                  notes.push(`本地库已建好，但云端还没初始化：${result.bootstrap.message ?? result.bootstrap.code}。之后点顶部的「云端未初始化」可以补推`);
+                  tone = 'error';
+                } else if (result?.bootstrap?.warning) {
+                  notes.push(result.bootstrap.warning);
+                }
+                notify(notes.length ? `知识库已创建。${notes.join('；')}` : '知识库已创建', tone);
+                if (result?.library?.id) loadGit(result.library.id);
               },
             })
           : dialog?.type === 'prompt'

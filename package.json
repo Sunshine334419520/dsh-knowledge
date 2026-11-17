@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-knowledge-base",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "知识库：本地目录 + Git 版本管理，左栏浏览、右栏预览、对话读写。",
@@ -16,10 +16,15 @@
     "client.js",
     "cordis.patch.yml",
     "lib/*.mjs",
+    "lib/*.sh",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "docs",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
   ],
+  "license": "MIT",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
