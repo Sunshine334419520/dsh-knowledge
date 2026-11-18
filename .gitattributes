@@ -1,0 +1,4 @@
+# .sh 必须是 LF：Windows 检出成 CRLF 会让 sh 报 "\r: command not found"。
+*.sh text eol=lf
+# .bat 按原样存（-text），工作区里一直是 CRLF，不受每个人 core.autocrlf 影响。
+*.bat -text

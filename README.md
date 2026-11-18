@@ -83,6 +83,7 @@ dsh plugin --profile desktop add "$PWD"
 - 私有 HTTPS 仓库的令牌按顺序查找：DSH 凭据服务（`DSH_KB_GITHUB_TOKEN` / `DSH_KB_GITLAB_TOKEN` / `DSH_KB_GIT_TOKEN`）→ 环境变量（`GITHUB_TOKEN`、`GH_TOKEN`、`GITLAB_TOKEN` 等）。令牌不进 remote URL、不进命令行参数；SSH 地址直接用本机 ssh 配置。
 - 建库按远端状态分两路：远端为空 → 本地初始化并首推（分支固定 `main`）；远端已有内容 → 先克隆到 `<父目录>/.kb-staging-*` 再落位，保留远端历史与默认分支。远端探不通时只建本地库，之后用「云端未初始化」补推。
 - 令牌可以在「新建知识库」对话框里直接保存（写入 DSH 凭据服务），保存前先用 `git ls-remote` 验证；只有读权限时会提示"可读但推不上去"。
+- Windows 上没有可用的 `sh`：`GIT_ASKPASS` 改走纯 cmd 的 `lib/askpass.bat`，不依赖 node，也不依赖 PATH；macOS / Linux 用 `lib/askpass.sh`。换行符由 `.gitattributes` 固定（`.sh` 必须是 LF，`.bat` 按原样存 CRLF），避免 Windows 检出后脚本失效。凭据同时用 `credential.username` 预置用户名，只剩密码提示，不受 git 提示语本地化影响。
 - 同步不做 rebase：远端有新提交时走合并；两边历史互不相关时默认拒绝合并，需要显式允许；冲突时自动 `merge --abort`，工作区保持干净。
 - 文件树一次渲染一整棵，没有分页；几万个文件的库会明显变慢。
 
@@ -123,7 +124,8 @@ dsh-knowledge/
 │   ├── git.mjs         # Git 命令封装与错误归类
 │   ├── paths.mjs       # 远端地址解析、目录名清洗
 │   ├── credentials.mjs # 访问令牌的读取与脱敏
-│   └── askpass.sh      # GIT_ASKPASS 垫片（只回令牌，不进日志）
+│   ├── askpass.sh      # macOS / Linux 的 GIT_ASKPASS 垫片
+│   └── askpass.bat     # Windows 的 GIT_ASKPASS 垫片（纯 cmd，CRLF）
 ├── client.js           # 客户端半：左栏面板、@kb 源、右栏页、保存动作
 ├── locale/             # zh / en 文案
 ├── docs/preview.png    # 本页示意图

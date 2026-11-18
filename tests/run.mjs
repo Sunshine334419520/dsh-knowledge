@@ -357,6 +357,42 @@ await test('远端不可达：本地建库成功，bootstrap 给错误，之后�
   assert.equal(view().git.needsPush, false);
 });
 
+
+/* ---------- 平台相关的 askpass ---------- */
+await test('gitEnv：Windows 用 .bat 垫片并预置用户名', () => {
+  const env = git.gitEnv({ token: 't0ken-123', username: 'me' }, 'win32');
+  assert.equal(env.GIT_ASKPASS, git.ASKPASS_BAT);
+  assert.ok(env.GIT_ASKPASS.endsWith('askpass.bat'));
+  assert.equal(env.GIT_ASKPASS_REQUIRE, 'force');
+  assert.equal(env.DSH_KB_GIT_USER, 'me');
+  assert.equal(env.DSH_KB_GIT_TOKEN, 't0ken-123');
+  assert.equal(env.GIT_CONFIG_COUNT, '2');
+  assert.equal(env.GIT_CONFIG_KEY_0, 'credential.helper');
+  assert.equal(env.GIT_CONFIG_VALUE_0, '');
+  assert.equal(env.GIT_CONFIG_KEY_1, 'credential.username');
+  assert.equal(env.GIT_CONFIG_VALUE_1, 'me');
+
+  const plain = git.gitEnv({}, 'win32');
+  assert.equal(plain.GIT_ASKPASS, '');
+  assert.equal(plain.GIT_CONFIG_COUNT, undefined);
+});
+
+await test('gitEnv：macOS/Linux 用 .sh 垫片', () => {
+  const env = git.gitEnv({ token: 't0ken-123' }, 'darwin');
+  assert.equal(env.GIT_ASKPASS, git.ASKPASS_SH);
+  assert.ok(env.GIT_ASKPASS.endsWith('askpass.sh'));
+  assert.equal(env.GIT_CONFIG_VALUE_1, 'x-access-token');
+});
+
+await test('askpass.bat：CRLF + 纯 cmd 取值，不依赖 node', () => {
+  const buf = fs.readFileSync(git.ASKPASS_BAT);
+  const text = buf.toString('utf8');
+  assert.match(text, /\r\n/);
+  assert.ok(text.includes('findstr'));
+  assert.ok(text.includes('%DSH_KB_GIT_TOKEN%') && text.includes('%DSH_KB_GIT_USER%'));
+  assert.ok(!/node|\.mjs|%\*/.test(text), 'bat 里不该有 node 或额外参数');
+});
+
 /* ---------- 汇总 ---------- */
 const failed = results.filter((row) => !row.ok);
 console.log(`\n${results.length - failed.length}/${results.length} 通过`);

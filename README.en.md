@@ -83,6 +83,7 @@ There is no build step: edit `client.js` and reload the page; edit `index.js` or
 - Tokens for private HTTPS remotes are looked up in order: the DSH credential service (`DSH_KB_GITHUB_TOKEN` / `DSH_KB_GITLAB_TOKEN` / `DSH_KB_GIT_TOKEN`), then environment variables (`GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, …). Tokens never appear in the remote URL or on a command line; SSH remotes use your local ssh configuration.
 - Creation has two paths: an empty remote is initialized locally and pushed (branch fixed to `main`); a remote with content is cloned into `<parent>/.kb-staging-*` first and then moved into place, keeping the remote's history and default branch. An unreachable remote falls back to a local-only library, and "Cloud not initialized" pushes it later.
 - Tokens can be saved right in the New library dialog (stored in the DSH credential service) and are verified with `git ls-remote` before saving; read-only access is reported as "readable but cannot push".
+- Windows has no usable `sh`: `GIT_ASKPASS` points at a pure-cmd `lib/askpass.bat` with no Node or PATH dependency; macOS / Linux use `lib/askpass.sh`. Line endings are pinned by `.gitattributes` (`.sh` must stay LF, `.bat` is stored verbatim as CRLF) so a Windows checkout cannot break the scripts. Credentials also preset `credential.username`, leaving only the password prompt, so localized git prompts do not matter.
 - Sync never rebases: new remote commits are merged, unrelated histories are refused unless you explicitly allow them, and conflicts trigger an automatic `merge --abort` that leaves the working tree clean.
 - The tree renders in one pass without pagination; libraries with tens of thousands of files get noticeably slower.
 
@@ -123,7 +124,8 @@ dsh-knowledge/
 │   ├── git.mjs         # Git wrapper and error classification
 │   ├── paths.mjs       # remote URL parsing, safe directory names
 │   ├── credentials.mjs # token lookup and redaction
-│   └── askpass.sh      # GIT_ASKPASS shim (returns the token, never logged)
+│   ├── askpass.sh      # GIT_ASKPASS shim for macOS / Linux
+│   └── askpass.bat     # GIT_ASKPASS shim for Windows (pure cmd, CRLF)
 ├── client.js           # client half: sidebar panel, @kb source, right pane, save action
 ├── locale/             # zh / en strings
 ├── docs/preview.png    # the figure above
