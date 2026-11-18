@@ -393,6 +393,27 @@ await test('askpass.bat：CRLF + 纯 cmd 取值，不依赖 node', () => {
   assert.ok(!/node|\.mjs|%\*/.test(text), 'bat 里不该有 node 或额外参数');
 });
 
+await test('删除库：只摘注册表保留文件，deleteFiles 才连文件一起删', async (dir) => {
+  const parent = path.join(dir, 'parent');
+  fs.mkdirSync(parent, { recursive: true });
+  const before = store.listLibraries().length;
+  const created = await store.createLibrary({ name: '待删库', parent, remote: '' });
+  const root = created.library.root;
+  assert.ok(fs.existsSync(root));
+
+  const only = store.removeLibrary(created.library.id, false);
+  assert.equal(only.deleted, false);
+  assert.equal(fs.existsSync(root), true, '只移除时目录应保留');
+  assert.equal(store.listLibraries().length, before);
+
+  const again = await store.createLibrary({ name: '待删库', parent, remote: '' });
+  assert.equal(again.library.root, root, '重新添加应回到同一个目录');
+  const all = store.removeLibrary(again.library.id, true);
+  assert.equal(all.deleted, true);
+  assert.equal(fs.existsSync(root), false, 'deleteFiles 应删掉目录');
+  assert.equal(store.listLibraries().length, before);
+});
+
 /* ---------- 汇总 ---------- */
 const failed = results.filter((row) => !row.ok);
 console.log(`\n${results.length - failed.length}/${results.length} 通过`);

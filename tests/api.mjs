@@ -197,5 +197,18 @@ await test('GET /api/kb/tree：种子目录都带 .gitkeep', async () => {
   }
 });
 
+await test('POST /api/kb/libraries/remove：只移除注册表', async () => {
+  assert.ok(createdLib, '前面的建库用例没有成功');
+  const { status, payload } = await call('POST', '/api/kb/libraries/remove', {
+    id: createdLib.id,
+    deleteFiles: false,
+  });
+  assert.equal(status, 200, JSON.stringify(payload));
+  assert.equal(payload.deleted, false);
+  assert.equal(fs.existsSync(createdLib.root), true, '只移除时目录应保留');
+  const list = await call('GET', '/api/kb/libraries');
+  assert.equal(list.payload.libraries.length, 0);
+});
+
 console.log(failures ? `\n${failures} 个用例失败` : '\nAPI 全部通过');
 process.exitCode = failures ? 1 : 0;

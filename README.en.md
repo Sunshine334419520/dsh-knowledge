@@ -62,7 +62,8 @@ There is no build step: edit `client.js` and reload the page; edit `index.js` or
 2. Organize with **New document / New folder / Upload file**; the file context menu renames, deletes, and copies citations.
 3. Type `@kb:` in the composer, pick from the search results, and the message gets `@kb:工作笔记/notes/周会话纪要.md`.
 4. Click **Save to knowledge base** under an assistant reply, pick the library and relative path; the body is written with front-matter and can be undone for 30 seconds.
-5. Watch Git status in the panel footer: **Commit** is local only, **Sync** runs commit → merge remote → push. If the cloud was never set up (no token, offline, remote not created yet) the header shows **Cloud not initialized**; click it to run the first push.
+5. To delete a library, use the trash button in the panel header. By default it only drops the entry (folder, `.kb/` and Git history stay, and you can add it back later); tick "also delete the local folder" to really remove it, which cannot be undone.
+6. Watch Git status in the panel footer: **Commit** is local only, **Sync** runs commit → merge remote → push. If the cloud was never set up (no token, offline, remote not created yet) the header shows **Cloud not initialized**; click it to run the first push.
 
 > Binary files (PDF, images, audio, video) open and download but have no text preview. Deleted files move to `.kb/trash/<timestamp>/` and disappear from the tree.
 

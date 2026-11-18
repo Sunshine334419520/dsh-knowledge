@@ -860,6 +860,65 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function RemoveLibraryDialog({ library, onClose, onRemoved }) {
+      const [deleteFiles, setDeleteFiles] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+
+      const submit = async () => {
+        setBusy(true);
+        setError('');
+        try {
+          const payload = await postJson('/api/kb/libraries/remove', {
+            id: library?.id,
+            deleteFiles,
+          });
+          onRemoved?.(payload);
+        } catch (cause) {
+          setError(errorText(cause));
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      return h(
+        Modal,
+        { title: '删除知识库', onClose: busy ? undefined : onClose },
+        h(
+          'div',
+          { className: 'kb-field' },
+          h('span', { className: 'kb-name' }, library?.name || library?.id || ''),
+          h('span', { className: 'kb-hint' }, library?.root ?? ''),
+        ),
+        h(
+          'span',
+          { className: 'kb-hint' },
+          '默认只从列表里移除：文件夹、.kb/ 和 Git 历史都原样保留，之后还能再添加回来。',
+        ),
+        h(
+          'label',
+          { style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px' } },
+          h('input', {
+            type: 'checkbox',
+            checked: deleteFiles,
+            onChange: (event) => setDeleteFiles(event.target.checked),
+          }),
+          '同时删除本地文件夹（不可恢复，也不进 .kb/trash）',
+        ),
+        error ? h('div', { className: 'kb-dialog-error' }, error) : null,
+        h(
+          'div',
+          { className: 'kb-dialog-actions' },
+          h('button', { className: 'kb-btn ghost', onClick: onClose, disabled: busy, type: 'button' }, '取消'),
+          h(
+            'button',
+            { className: 'kb-btn danger', onClick: submit, disabled: busy, type: 'button' },
+            busy ? '删除中…' : deleteFiles ? '删除库和文件' : '从列表移除',
+          ),
+        ),
+      );
+    }
+
     function PromptDialog({ title, label, initial, confirmText, onClose, onSubmit }) {
       const [value, setValue] = useState(initial ?? '');
       const [busy, setBusy] = useState(false);
@@ -1773,6 +1832,14 @@ window.__ModuleLoader__.load({
             disabled: !active || !status?.repo || !status.remote,
             onClick: () => gitAction('sync'),
           }),
+          h('span', { className: 'kb-divider' }),
+          h(IconButton, {
+            icon: 'trash',
+            label: active ? `删除知识库「${active.name}」` : '删除知识库',
+            danger: true,
+            disabled: !active,
+            onClick: () => setDialog({ type: 'remove' }),
+          }),
         ),
       );
 
@@ -1975,6 +2042,18 @@ window.__ModuleLoader__.load({
                 if (result?.library?.id) loadGit(result.library.id);
               },
             })
+          : dialog?.type === 'remove'
+            ? h(RemoveLibraryDialog, {
+                library: active,
+                onClose: () => setDialog(null),
+                onRemoved: async (payload) => {
+                  setDialog(null);
+                  const next = await loadLibraries();
+                  const remaining = next?.libraries ?? [];
+                  setActiveId(remaining[0]?.id ?? null);
+                  notify(payload?.deleted ? '知识库和本地文件已删除' : '知识库已从列表移除');
+                },
+              })
           : dialog?.type === 'prompt'
             ? h(PromptDialog, {
                 title: dialog.title,
