@@ -24,6 +24,8 @@ const ROUTES = [
   ['/api/kb/remote/test', ['POST']],
   ['/api/kb/tree', ['GET']],
   ['/api/kb/file', ['GET', 'POST']],
+  ['/api/kb/raw', ['GET']],
+  ['/api/kb/preview', ['GET']],
   ['/api/kb/file/create', ['POST']],
   ['/api/kb/folder', ['POST']],
   ['/api/kb/rename', ['POST']],

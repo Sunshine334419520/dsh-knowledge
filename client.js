@@ -69,6 +69,11 @@ window.__ModuleLoader__.load({
       chevron: ['M9 6l6 6-6 6'],
       more: ['M6 12h.01', 'M12 12h.01', 'M18 12h.01'],
       up: ['M12 19V5', 'M5 12l7-7 7 7'],
+      copy: ['M9 9h10v10H9V9Z', 'M5 15V5h10'],
+      check: ['M4 12l5 5L20 6'],
+      download: ['M12 4v11', 'M8 11l4 4 4-4', 'M5 20h14'],
+      wrap: ['M4 7h16', 'M4 12h11a3 3 0 0 1 0 6H9', 'M11 15l-2 3 2 3'],
+      external: ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v6H4V6h6'],
     };
 
     function Icon({ name, size = 16, className }) {
@@ -262,40 +267,6 @@ window.__ModuleLoader__.load({
 
     // ---------------------------------------------------------------- markdown
 
-    const INLINE_RULES = [
-      { pattern: /`([^`]+)`/g, render: (m) => h('code', { className: 'kb-md-code' }, m[1]) },
-      { pattern: /\*\*([^*]+)\*\*/g, render: (m) => h('strong', null, m[1]) },
-      { pattern: /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, render: (m) => h('a', { href: m[2], target: '_blank', rel: 'noreferrer' }, m[1]) },
-    ];
-
-    function renderInline(text, keyPrefix) {
-      let nodes = [text];
-      let round = 0;
-      for (const rule of INLINE_RULES) {
-        const output = [];
-        for (const node of nodes) {
-          if (typeof node !== 'string') {
-            output.push(node);
-            continue;
-          }
-          let cursor = 0;
-          let index = 0;
-          let match;
-          rule.pattern.lastIndex = 0;
-          while ((match = rule.pattern.exec(node)) !== null) {
-            if (match.index > cursor) output.push(node.slice(cursor, match.index));
-            output.push(React.cloneElement(rule.render(match), { key: `${keyPrefix}-${round}-${index}` }));
-            cursor = match.index + match[0].length;
-            index += 1;
-          }
-          if (cursor < node.length) output.push(node.slice(cursor));
-        }
-        nodes = output;
-        round += 1;
-      }
-      return nodes;
-    }
-
     function Skeleton({ lines = 4 }) {
       return h(
         'div',
@@ -304,119 +275,931 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function Markdown({ text }) {
-      const blocks = useMemo(() => parseMarkdown(text), [text]);
-      return h(
-        'div',
-        { className: 'kb-md' },
-        blocks.map((block, index) => {
-          if (block.type === 'code') {
-            return h(
-              'pre',
-              { key: index, className: 'kb-md-pre' },
-              h('code', null, block.text),
+    // ---------------------------------------------------------------- preview engine
+
+    function extOf(filePath) {
+      const name = String(filePath || '');
+      const dot = name.lastIndexOf('.');
+      return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+    }
+
+    function rawUrl(libId, filePath, options = {}) {
+      const qs = new URLSearchParams({ lib: libId, path: filePath });
+      if (options.download) qs.set('download', '1');
+      return `/api/kb/raw?${qs.toString()}`;
+    }
+
+    function previewUrl(libId, filePath) {
+      return `/api/kb/preview?${new URLSearchParams({ lib: libId, path: filePath }).toString()}`;
+    }
+
+    const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg']);
+    const AUDIO_EXT = new Set(['mp3', 'wav', 'ogg', 'm4a', 'flac']);
+    const VIDEO_EXT = new Set(['mp4', 'webm', 'mov', 'ogv']);
+    const OFFICE_EXT = new Set(['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt']);
+    const CODE_LANG = {
+      js: 'JavaScript', mjs: 'JavaScript', cjs: 'JavaScript', ts: 'TypeScript', tsx: 'TSX', jsx: 'JSX',
+      py: 'Python', rb: 'Ruby', go: 'Go', rs: 'Rust', java: 'Java', kt: 'Kotlin', swift: 'Swift',
+      c: 'C', h: 'C', cpp: 'C++', hpp: 'C++', cs: 'C#', php: 'PHP', sh: 'Shell', bash: 'Shell',
+      ps1: 'PowerShell', bat: 'Batch', cmd: 'Batch', sql: 'SQL', json: 'JSON', yaml: 'YAML',
+      yml: 'YAML', toml: 'TOML', ini: 'INI', xml: 'XML', html: 'HTML', htm: 'HTML', css: 'CSS',
+      scss: 'SCSS', less: 'Less', vue: 'Vue', svelte: 'Svelte', md: 'Markdown', markdown: 'Markdown',
+      tex: 'LaTeX', rst: 'reST', csv: 'CSV', log: 'Log', txt: 'Text', dockerfile: 'Dockerfile',
+    };
+
+    function languageOf(filePath) {
+      const name = String(filePath || '').split('/').pop() || '';
+      if (/^dockerfile$/i.test(name)) return 'Dockerfile';
+      if (/^makefile$/i.test(name)) return 'Makefile';
+      return CODE_LANG[extOf(filePath)] || (extOf(filePath) ? extOf(filePath).toUpperCase() : 'Text');
+    }
+
+    // --- Markdown 解析（CommonMark / GFM 常用子集） ---
+
+    function mdHeading(line) {
+      const match = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+      return match ? { level: match[1].length, text: match[2] } : null;
+    }
+
+    function mdFence(line) {
+      const match = /^ {0,3}(`{3,}|~{3,})\s*([\w#+.-]*)\s*$/.exec(line);
+      return match ? { marker: match[1], lang: match[2] } : null;
+    }
+
+    function mdHr(line) {
+      return /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line);
+    }
+
+    function mdList(line) {
+      const match = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(line);
+      if (!match) return null;
+      return {
+        indent: match[1].replaceAll('\t', '    ').length,
+        ordered: /\d/.test(match[2]),
+        start: Number.parseInt(match[2], 10) || 1,
+        text: match[3],
+      };
+    }
+
+    function mdSplitRow(line) {
+      let text = String(line).trim();
+      if (text.startsWith('|')) text = text.slice(1);
+      if (text.endsWith('|')) text = text.slice(0, -1);
+      const cells = [];
+      let buffer = '';
+      let escaped = false;
+      for (const ch of text) {
+        if (escaped) {
+          buffer += ch;
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '|') {
+          cells.push(buffer.trim());
+          buffer = '';
+        } else {
+          buffer += ch;
+        }
+      }
+      cells.push(buffer.trim());
+      return cells;
+    }
+
+    function mdTableSeparator(line) {
+      if (!String(line).includes('|')) return false;
+      const cells = mdSplitRow(line);
+      return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+    }
+
+    function parseMarkdownDoc(source) {
+      const lines = String(source ?? '').replace(/\r\n?/g, '\n').split('\n');
+      const blocks = [];
+      let index = 0;
+
+      if (lines[0]?.trim() === '---') {
+        let close = 1;
+        while (close < lines.length && !/^(---|\.\.\.)\s*$/.test(lines[close])) close += 1;
+        if (close < lines.length) {
+          const entries = [];
+          for (let cursor = 1; cursor < close; cursor += 1) {
+            const match = /^([^:\s][^:]*):\s*(.*)$/.exec(lines[cursor]);
+            if (match) entries.push({ key: match[1].trim(), value: match[2].trim() });
+          }
+          blocks.push({ type: 'frontmatter', entries });
+          index = close + 1;
+        }
+      }
+
+      while (index < lines.length) {
+        const line = lines[index];
+        if (!line.trim()) {
+          index += 1;
+          continue;
+        }
+
+        const fence = mdFence(line);
+        if (fence) {
+          const fenceChar = fence.marker[0];
+          const minimum = fence.marker.length;
+          const buffer = [];
+          index += 1;
+          while (index < lines.length) {
+            const candidate = lines[index].trim();
+            const closing = new RegExp(`^ {0,3}${fenceChar}{${minimum},}\\s*$`);
+            if (closing.test(candidate)) {
+              index += 1;
+              break;
+            }
+            buffer.push(lines[index]);
+            index += 1;
+          }
+          blocks.push({ type: 'code', lang: fence.lang || '', text: buffer.join('\n') });
+          continue;
+        }
+
+        const heading = mdHeading(line);
+        if (heading) {
+          blocks.push({ type: 'heading', level: heading.level, text: heading.text });
+          index += 1;
+          continue;
+        }
+
+        if (index + 1 < lines.length && line.trim() && /^ {0,3}=+\s*$/.test(lines[index + 1])) {
+          blocks.push({ type: 'heading', level: 1, text: line.trim() });
+          index += 2;
+          continue;
+        }
+        if (
+          index + 1 < lines.length &&
+          line.trim() &&
+          !mdList(line) &&
+          /^ {0,3}-{2,}\s*$/.test(lines[index + 1])
+        ) {
+          blocks.push({ type: 'heading', level: 2, text: line.trim() });
+          index += 2;
+          continue;
+        }
+
+        if (mdHr(line)) {
+          blocks.push({ type: 'hr' });
+          index += 1;
+          continue;
+        }
+
+        if (/^ {0,3}>/.test(line)) {
+          const buffer = [];
+          while (index < lines.length && /^ {0,3}>/.test(lines[index])) {
+            buffer.push(lines[index].replace(/^ {0,3}>\s?/, ''));
+            index += 1;
+          }
+          blocks.push({ type: 'quote', blocks: parseMarkdownDoc(buffer.join('\n')) });
+          continue;
+        }
+
+        if (line.includes('|') && index + 1 < lines.length && mdTableSeparator(lines[index + 1])) {
+          const header = mdSplitRow(line);
+          const separators = mdSplitRow(lines[index + 1]);
+          const align = separators.map((cell) => {
+            const left = cell.startsWith(':');
+            const right = cell.endsWith(':');
+            return left && right ? 'center' : right ? 'right' : left ? 'left' : null;
+          });
+          index += 2;
+          const rows = [];
+          while (index < lines.length && lines[index].trim() && lines[index].includes('|')) {
+            rows.push(mdSplitRow(lines[index]));
+            index += 1;
+          }
+          blocks.push({ type: 'table', header, align, rows });
+          continue;
+        }
+
+        const list = mdList(line);
+        if (list) {
+          const ordered = list.ordered;
+          const start = list.start;
+          const indent = list.indent;
+          const items = [];
+          while (index < lines.length) {
+            const current = mdList(lines[index]);
+            if (!current || current.ordered !== ordered || current.indent !== indent) break;
+            const itemLines = [current.text];
+            index += 1;
+            while (index < lines.length) {
+              const next = lines[index];
+              if (!next.trim()) {
+                const following = mdList(lines[index + 1] || '');
+                if (following && following.ordered === ordered && following.indent === indent) {
+                  index += 1;
+                  break;
+                }
+                break;
+              }
+              const leading = /^\s*/.exec(next)[0].replaceAll('\t', '    ').length;
+              if (leading <= indent) break;
+              itemLines.push(next.replace(/^\s{1,}/, ''));
+              index += 1;
+            }
+            let checked = null;
+            const task = /^\[([ xX])\]\s+(.*)$/.exec(itemLines[0]);
+            if (task) {
+              checked = task[1].toLowerCase() === 'x';
+              itemLines[0] = task[2];
+            }
+            items.push({ checked, blocks: parseMarkdownDoc(itemLines.join('\n')) });
+          }
+          blocks.push({ type: 'list', ordered, start, items });
+          continue;
+        }
+
+        if (/^(    |\t)/.test(line)) {
+          const buffer = [];
+          while (index < lines.length && (/^(    |\t)/.test(lines[index]) || !lines[index].trim())) {
+            if (!lines[index].trim() && !/^(    |\t)/.test(lines[index + 1] || '')) break;
+            buffer.push(lines[index].replace(/^(    |\t)/, ''));
+            index += 1;
+          }
+          blocks.push({ type: 'code', lang: '', text: buffer.join('\n') });
+          continue;
+        }
+
+        const paragraph = [];
+        while (index < lines.length) {
+          const candidate = lines[index];
+          if (!candidate.trim()) break;
+          if (mdFence(candidate) || mdHeading(candidate) || mdHr(candidate)) break;
+          if (/^ {0,3}>/.test(candidate)) break;
+          if (mdList(candidate)) break;
+          if (candidate.includes('|') && index + 1 < lines.length && mdTableSeparator(lines[index + 1])) break;
+          paragraph.push(candidate);
+          index += 1;
+        }
+        if (!paragraph.length) {
+          paragraph.push(lines[index] ?? '');
+          index += 1;
+        }
+        blocks.push({ type: 'paragraph', text: paragraph.join('\n') });
+      }
+      return blocks;
+    }
+
+    function mdSlug(text) {
+      return String(text || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^\w\u4e00-\u9fff-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    function mdParseLinkAt(text, start) {
+      let depth = 0;
+      let end = start;
+      for (; end < text.length; end += 1) {
+        const ch = text[end];
+        if (ch === '\\') {
+          end += 1;
+          continue;
+        }
+        if (ch === '[') depth += 1;
+        else if (ch === ']') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      if (end >= text.length) return null;
+      const label = text.slice(start + 1, end);
+      if (text[end + 1] !== '(') return null;
+      let cursor = end + 2;
+      let paren = 1;
+      for (; cursor < text.length; cursor += 1) {
+        const ch = text[cursor];
+        if (ch === '\\') {
+          cursor += 1;
+          continue;
+        }
+        if (ch === '(') paren += 1;
+        else if (ch === ')') {
+          paren -= 1;
+          if (paren === 0) break;
+        }
+      }
+      if (cursor >= text.length) return null;
+      const inside = text.slice(end + 2, cursor).trim();
+      const match = /^(\S+?)(?:\s+"([^"]*)")?$/.exec(inside);
+      if (!match) return null;
+      return { label, target: match[1].replace(/^<|>$/g, ''), title: match[2] || '', end: cursor + 1 };
+    }
+
+    function mdResolvePath(ctx, target) {
+      const clean = String(target || '').split('#')[0].split('?')[0];
+      if (!clean) return '';
+      if (clean.startsWith('/')) return clean.slice(1);
+      return joinPath(parentDir(ctx?.path || ''), clean.replace(/^\.\//, ''));
+    }
+
+    function renderInlineMd(text, keyPrefix, ctx) {
+      const nodes = [];
+      let buffer = '';
+      let key = 0;
+      const push = (node) => {
+        if (buffer) {
+          nodes.push(buffer);
+          buffer = '';
+        }
+        nodes.push(node);
+      };
+      let index = 0;
+      while (index < text.length) {
+        const rest = text.slice(index);
+        if (rest[0] === '\\' && /[\\`*_{}[\]()#+\-.!~|>]/.test(rest[1] || '')) {
+          buffer += rest[1];
+          index += 2;
+          continue;
+        }
+        if (rest[0] === '`') {
+          const run = /^`+/.exec(rest)[0];
+          const close = text.indexOf(run, index + run.length);
+          if (close > index) {
+            push(h('code', { key: `c${key++}`, className: 'kb-md-code' }, text.slice(index + run.length, close).replace(/^ | $/g, '')));
+            index = close + run.length;
+            continue;
+          }
+        }
+        if (rest.startsWith('![')) {
+          const parsed = mdParseLinkAt(text, index + 1);
+          if (parsed) {
+            const source = /^(https?:|data:|blob:)/i.test(parsed.target)
+              ? parsed.target
+              : rawUrl(ctx?.libId, mdResolvePath(ctx, parsed.target));
+            push(
+              h('img', {
+                key: `i${key++}`,
+                className: 'kb-md-img',
+                src: source,
+                alt: parsed.label,
+                loading: 'lazy',
+                title: parsed.title || undefined,
+              }),
             );
+            index = parsed.end;
+            continue;
           }
-          if (block.type === 'heading') {
-            return h(`h${block.level}`, { key: index, className: `kb-md-h${block.level}` }, ...renderInline(block.text, `h${index}`));
+        }
+        if (rest[0] === '[') {
+          const parsed = mdParseLinkAt(text, index);
+          if (parsed) {
+            const external = /^(https?:|mailto:)/i.test(parsed.target);
+            const chunk = renderInlineMd(parsed.label, `${keyPrefix}-l${key}`, ctx);
+            if (external) {
+              push(
+                h(
+                  'a',
+                  { key: `a${key++}`, href: parsed.target, target: '_blank', rel: 'noreferrer', title: parsed.title || undefined },
+                  ...chunk,
+                ),
+              );
+            } else if (parsed.target.startsWith('#') || parsed.target.includes('.md')) {
+              const targetPath = mdResolvePath(ctx, parsed.target);
+              push(
+                h(
+                  'a',
+                  {
+                    key: `a${key++}`,
+                    href: '#',
+                    className: 'kb-md-internal',
+                    title: targetPath || parsed.title || undefined,
+                    onClick: (event) => {
+                      event.preventDefault();
+                      if (parsed.target.startsWith('#')) {
+                        const id = mdSlug(parsed.target.slice(1));
+                        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      } else if (ctx?.onOpenLink) {
+                        ctx.onOpenLink(targetPath);
+                      }
+                    },
+                  },
+                  ...chunk,
+                ),
+              );
+            } else {
+              push(
+                h(
+                  'a',
+                  { key: `a${key++}`, href: rawUrl(ctx?.libId, mdResolvePath(ctx, parsed.target)), target: '_blank', rel: 'noreferrer' },
+                  ...chunk,
+                ),
+              );
+            }
+            index = parsed.end;
+            continue;
           }
-          if (block.type === 'hr') return h('hr', { key: index, className: 'kb-md-hr' });
-          if (block.type === 'list') {
-            return h(
-              block.ordered ? 'ol' : 'ul',
-              { key: index, className: 'kb-md-list' },
-              block.items.map((item, itemIndex) => h('li', { key: itemIndex }, ...renderInline(item, `l${index}-${itemIndex}`))),
-            );
+        }
+        if (rest[0] === '<') {
+          const auto = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/.exec(rest);
+          if (auto) {
+            push(h('a', { key: `a${key++}`, href: auto[1], target: '_blank', rel: 'noreferrer' }, auto[1]));
+            index += auto[0].length;
+            continue;
           }
-          if (block.type === 'quote') {
-            return h('blockquote', { key: index, className: 'kb-md-quote' }, ...renderInline(block.text, `q${index}`));
+        }
+        if (rest.startsWith('**') || rest.startsWith('__')) {
+          const marker = rest.slice(0, 2);
+          const close = text.indexOf(marker, index + 2);
+          if (close > index + 2) {
+            push(h('strong', { key: `s${key++}` }, ...renderInlineMd(text.slice(index + 2, close), `${keyPrefix}-s${key}`, ctx)));
+            index = close + 2;
+            continue;
           }
-          return h('p', { key: index, className: 'kb-md-p' }, ...renderInline(block.text, `p${index}`));
-        }),
+        }
+        if (rest.startsWith('~~')) {
+          const close = text.indexOf('~~', index + 2);
+          if (close > index + 2) {
+            push(h('del', { key: `d${key++}` }, ...renderInlineMd(text.slice(index + 2, close), `${keyPrefix}-d${key}`, ctx)));
+            index = close + 2;
+            continue;
+          }
+        }
+        if (rest[0] === '*' || rest[0] === '_') {
+          const marker = rest[0];
+          const close = text.indexOf(marker, index + 1);
+          if (close > index + 1 && !/\s/.test(text[index + 1])) {
+            push(h('em', { key: `e${key++}` }, ...renderInlineMd(text.slice(index + 1, close), `${keyPrefix}-e${key}`, ctx)));
+            index = close + 1;
+            continue;
+          }
+        }
+        if (/^https?:\/\/[^\s<>()]+/.test(rest) && (index === 0 || /[\s(（]/.test(text[index - 1]))) {
+          const url = /^https?:\/\/[^\s<>()]+/.exec(rest)[0].replace(/[.,;:!?]+$/, '');
+          push(h('a', { key: `a${key++}`, href: url, target: '_blank', rel: 'noreferrer' }, url));
+          index += url.length;
+          continue;
+        }
+        if (rest.startsWith('  \n')) {
+          push(h('br', { key: `b${key++}` }));
+          index += 3;
+          continue;
+        }
+        if (rest[0] === '\n') {
+          buffer += ' ';
+          index += 1;
+          continue;
+        }
+        buffer += rest[0];
+        index += 1;
+      }
+      if (buffer) nodes.push(buffer);
+      return nodes.map((node, nodeIndex) =>
+        typeof node === 'string' ? node : React.cloneElement(node, { key: `${keyPrefix}-${nodeIndex}` }),
       );
     }
 
-    function parseMarkdown(source) {
-      const lines = String(source ?? '').replace(/\r\n/g, '\n').split('\n');
-      const blocks = [];
-      let paragraph = [];
-      let list = null;
-      let fence = null;
-
-      const flushParagraph = () => {
-        if (paragraph.length) {
-          blocks.push({ type: 'paragraph', text: paragraph.join(' ') });
-          paragraph = [];
+    function CopyButton({ text, label }) {
+      const [copied, setCopied] = useState(false);
+      const copy = async () => {
+        try {
+          await navigator.clipboard.writeText(String(text ?? ''));
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          setCopied(false);
         }
       };
-      const flushList = () => {
-        if (list) {
-          blocks.push(list);
-          list = null;
-        }
-      };
+      return h(
+        'button',
+        { type: 'button', className: 'kb-copy', onClick: copy, title: label || '复制' },
+        h(Icon, { name: copied ? 'check' : 'copy', size: 13 }),
+        copied ? '已复制' : label || '复制',
+      );
+    }
 
-      for (const line of lines) {
-        if (fence) {
-          if (/^```/.test(line.trim())) {
-            blocks.push({ type: 'code', text: fence.lines.join('\n') });
-            fence = null;
+    function CodeBlock({ text, lang }) {
+      return h(
+        'div',
+        { className: 'kb-codeblock' },
+        h(
+          'div',
+          { className: 'kb-codeblock-head' },
+          h('span', { className: 'kb-codeblock-lang' }, lang || 'text'),
+          h(CopyButton, { text, label: '复制代码' }),
+        ),
+        h('pre', { className: 'kb-codeblock-pre' }, h('code', null, text)),
+      );
+    }
+
+    function MarkdownView({ text, libId, path, onOpenLink }) {
+      const blocks = useMemo(() => parseMarkdownDoc(text || ''), [text]);
+      const ctx = { libId, path, onOpenLink };
+
+      const renderBlocks = (list, prefix) =>
+        list.map((block, index) => {
+          const key = `${prefix}-${index}`;
+          if (block.type === 'frontmatter') {
+            return h(
+              'div',
+              { key, className: 'kb-fm' },
+              block.entries.map((entry) =>
+                h(
+                  'div',
+                  { key: entry.key, className: 'kb-fm-row' },
+                  h('span', { className: 'kb-fm-key' }, entry.key),
+                  h('span', { className: 'kb-fm-value' }, entry.value),
+                ),
+              ),
+            );
+          }
+          if (block.type === 'heading') {
+            const Tag = `h${block.level}`;
+            return h(Tag, { key, id: mdSlug(block.text), className: `kb-md-h${block.level}` }, ...renderInlineMd(block.text, key, ctx));
+          }
+          if (block.type === 'code') {
+            return h(CodeBlock, { key, text: block.text, lang: block.lang });
+          }
+          if (block.type === 'hr') return h('hr', { key, className: 'kb-md-hr' });
+          if (block.type === 'quote') {
+            return h('blockquote', { key, className: 'kb-md-quote' }, ...renderBlocks(block.blocks, `${key}-q`));
+          }
+          if (block.type === 'table') {
+            return h(
+              'div',
+              { key, className: 'kb-table-wrap' },
+              h(
+                'table',
+                { className: 'kb-table' },
+                h(
+                  'thead',
+                  null,
+                  h(
+                    'tr',
+                    null,
+                    block.header.map((cell, cellIndex) =>
+                      h('th', { key: cellIndex, style: block.align[cellIndex] ? { textAlign: block.align[cellIndex] } : undefined }, ...renderInlineMd(cell, `${key}-th-${cellIndex}`, ctx)),
+                    ),
+                  ),
+                ),
+                h(
+                  'tbody',
+                  null,
+                  block.rows.map((row, rowIndex) =>
+                    h(
+                      'tr',
+                      { key: rowIndex },
+                      block.header.map((_, cellIndex) =>
+                        h('td', { key: cellIndex, style: block.align[cellIndex] ? { textAlign: block.align[cellIndex] } : undefined }, ...renderInlineMd(row[cellIndex] ?? '', `${key}-td-${rowIndex}-${cellIndex}`, ctx)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+          if (block.type === 'list') {
+            const Tag = block.ordered ? 'ol' : 'ul';
+            return h(
+              Tag,
+              { key, className: 'kb-md-list', start: block.ordered && block.start > 1 ? block.start : undefined },
+              block.items.map((item, itemIndex) =>
+                h(
+                  'li',
+                  { key: itemIndex, className: item.checked !== null ? 'kb-md-task' : undefined },
+                  item.checked !== null ? h('input', { type: 'checkbox', checked: item.checked, readOnly: true }) : null,
+                  ...renderBlocks(item.blocks, `${key}-li-${itemIndex}`),
+                ),
+              ),
+            );
+          }
+          return h('p', { key, className: 'kb-md-p' }, ...renderInlineMd(block.text, key, ctx));
+        });
+
+      return h('div', { className: 'kb-md' }, ...renderBlocks(blocks, 'md'));
+    }
+
+    function CodeView({ text, path }) {
+      const [wrap, setWrap] = useState(false);
+      const content = String(text ?? '');
+      const lines = content ? content.split('\n') : [''];
+      return h(
+        'div',
+        { className: 'kb-codeview' },
+        h(
+          'div',
+          { className: 'kb-codeview-head' },
+          h('span', { className: 'kb-codeview-lang' }, languageOf(path)),
+          h('span', { className: 'kb-codeview-meta' }, `${lines.length} 行`),
+          h('span', { className: 'kb-spacer' }),
+          h(IconButton, { icon: 'wrap', label: wrap ? '取消自动换行' : '自动换行', active: wrap, onClick: () => setWrap((value) => !value) }),
+          h(CopyButton, { text: content, label: '复制全文' }),
+        ),
+        h(
+          'div',
+          { className: cx('kb-codeview-body', wrap && 'wrap') },
+          h(
+            'div',
+            { className: 'kb-codeview-gutter', 'aria-hidden': 'true' },
+            ...lines.map((_, index) => h('span', { key: index }, index + 1)),
+          ),
+          h('pre', { className: 'kb-codeview-pre' }, h('code', null, content)),
+        ),
+      );
+    }
+
+    function parseCsvRows(text, delimiter) {
+      const rows = [];
+      let row = [];
+      let field = '';
+      let quoted = false;
+      const source = String(text ?? '');
+      for (let index = 0; index < source.length; index += 1) {
+        const ch = source[index];
+        if (quoted) {
+          if (ch === '"') {
+            if (source[index + 1] === '"') {
+              field += '"';
+              index += 1;
+            } else {
+              quoted = false;
+            }
           } else {
-            fence.lines.push(line);
+            field += ch;
           }
           continue;
         }
-        const fenceStart = /^```(\w*)/.exec(line.trim());
-        if (fenceStart) {
-          flushParagraph();
-          flushList();
-          fence = { lines: [] };
+        if (ch === '"') {
+          quoted = true;
           continue;
         }
-        if (!line.trim()) {
-          flushParagraph();
-          flushList();
+        if (ch === delimiter) {
+          row.push(field);
+          field = '';
           continue;
         }
-        const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-        if (heading) {
-          flushParagraph();
-          flushList();
-          blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] });
+        if (ch === '\n') {
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = '';
           continue;
         }
-        if (/^(-{3,}|\*{3,})$/.test(line.trim())) {
-          flushParagraph();
-          flushList();
-          blocks.push({ type: 'hr' });
-          continue;
-        }
-        const quote = /^>\s?(.*)$/.exec(line);
-        if (quote) {
-          flushParagraph();
-          flushList();
-          blocks.push({ type: 'quote', text: quote[1] });
-          continue;
-        }
-        const bullet = /^\s*([-*+])\s+(.*)$/.exec(line);
-        const ordered = /^\s*(\d+)[.)]\s+(.*)$/.exec(line);
-        if (bullet || ordered) {
-          flushParagraph();
-          const isOrdered = Boolean(ordered);
-          if (!list || list.ordered !== isOrdered) {
-            flushList();
-            list = { type: 'list', ordered: isOrdered, items: [] };
-          }
-          list.items.push((bullet || ordered)[2]);
-          continue;
-        }
-        flushList();
-        paragraph.push(line.trim());
+        if (ch === '\r') continue;
+        field += ch;
       }
-      if (fence) blocks.push({ type: 'code', text: fence.lines.join('\n') });
-      flushParagraph();
-      flushList();
-      return blocks.length ? blocks : [{ type: 'paragraph', text: '' }];
+      row.push(field);
+      if (row.length > 1 || row[0] !== '') rows.push(row);
+      return rows;
+    }
+
+    function CsvView({ text, path }) {
+      const [raw, setRaw] = useState(false);
+      const delimiter = extOf(path) === 'tsv' ? '\t' : ',';
+      const all = useMemo(() => parseCsvRows(text, delimiter), [text, delimiter]);
+      const rows = all.slice(0, 300);
+      const columns = rows.reduce((max, row) => Math.max(max, row.length), 0);
+      return h(
+        'div',
+        { className: 'kb-dataview' },
+        h(
+          'div',
+          { className: 'kb-dataview-head' },
+          h('span', { className: 'kb-codeview-lang' }, `${all.length} 行 × ${columns} 列`),
+          h('span', { className: 'kb-spacer' }),
+          h(CopyButton, { text, label: '复制原文' }),
+          h(IconButton, { icon: raw ? 'eye' : 'file-text', label: raw ? '表格预览' : '原文', active: raw, onClick: () => setRaw((value) => !value) }),
+        ),
+        raw
+          ? h('pre', { className: 'kb-codeview-pre kb-csv-raw' }, h('code', null, text))
+          : h(
+              'div',
+              { className: 'kb-table-wrap kb-dataview-body' },
+              h(
+                'table',
+                { className: 'kb-table kb-csv-table' },
+                h(
+                  'thead',
+                  null,
+                  h('tr', null, h('th', { className: 'kb-csv-rownum' }, '#'), ...Array.from({ length: columns }, (_, index) => h('th', { key: index }, rows[0]?.[index] ?? ''))),
+                ),
+                h(
+                  'tbody',
+                  null,
+                  ...rows.slice(1).map((row, rowIndex) =>
+                    h(
+                      'tr',
+                      { key: rowIndex },
+                      h('td', { className: 'kb-csv-rownum' }, rowIndex + 2),
+                      ...Array.from({ length: columns }, (_, cellIndex) => h('td', { key: cellIndex }, row[cellIndex] ?? '')),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        all.length > rows.length ? h('div', { className: 'kb-preview-note' }, `只预览前 ${rows.length} 行，共 ${all.length} 行。`) : null,
+      );
+    }
+
+    function ImageView({ libId, path, name }) {
+      const [full, setFull] = useState(false);
+      const source = rawUrl(libId, path);
+      return h(
+        'div',
+        { className: 'kb-imageview' },
+        h(
+          'div',
+          { className: 'kb-imageview-head' },
+          h('span', { className: 'kb-codeview-lang' }, name || baseName(path)),
+          h('span', { className: 'kb-spacer' }),
+          h('a', { className: 'kb-iconbtn', href: source, target: '_blank', rel: 'noreferrer', title: '在新窗口打开原图' }, h(Icon, { name: 'external', size: 16 })),
+        ),
+        h(
+          'div',
+          { className: cx('kb-image-stage', full && 'full'), onClick: () => setFull((value) => !value), title: full ? '点击适应窗口' : '点击查看原始大小' },
+          h('img', { src: source, alt: name || baseName(path), loading: 'lazy' }),
+        ),
+      );
+    }
+
+    function PdfView({ libId, path, name }) {
+      const source = rawUrl(libId, path);
+      return h(
+        'div',
+        { className: 'kb-pdfview' },
+        h('iframe', { className: 'kb-pdf-frame', src: source, title: name || baseName(path) }),
+        h(
+          'div',
+          { className: 'kb-preview-note' },
+          '如果 PDF 没有显示，',
+          h('a', { href: source, target: '_blank', rel: 'noreferrer' }, '在新窗口打开'),
+          '。',
+        ),
+      );
+    }
+
+    function MediaView({ libId, path, kind, name }) {
+      const source = rawUrl(libId, path);
+      return h(
+        'div',
+        { className: 'kb-mediaview' },
+        kind === 'video'
+          ? h('video', { className: 'kb-media', src: source, controls: true, preload: 'metadata' })
+          : h('audio', { className: 'kb-media', src: source, controls: true, preload: 'metadata' }),
+        h('div', { className: 'kb-preview-note' }, name || baseName(path)),
+      );
+    }
+
+    function BinaryView({ libId, path, file }) {
+      return h(
+        'div',
+        { className: 'kb-empty kb-binary' },
+        h(Icon, { name: 'file-text', size: 28 }),
+        h('b', null, '暂不支持内联预览'),
+        h('span', null, `${baseName(path)} · ${formatBytes(file?.size ?? 0)}`),
+        h(
+          'div',
+          { className: 'kb-binary-actions' },
+          h('a', { className: 'kb-btn', href: rawUrl(libId, path), target: '_blank', rel: 'noreferrer' }, '在窗口打开'),
+          h('a', { className: 'kb-btn', href: rawUrl(libId, path, { download: true }) }, h(Icon, { name: 'download', size: 14 }), '下载'),
+        ),
+      );
+    }
+
+    function OfficeView({ libId, path, name }) {
+      const [state, setState] = useState({ phase: 'loading' });
+      const [sheet, setSheet] = useState(0);
+      useEffect(() => {
+        let alive = true;
+        setState({ phase: 'loading' });
+        setSheet(0);
+        getJson(previewUrl(libId, path))
+          .then((payload) => {
+            if (alive) setState({ phase: 'ready', preview: payload });
+          })
+          .catch((cause) => {
+            if (alive) setState({ phase: 'error', error: errorText(cause) });
+          });
+        return () => {
+          alive = false;
+        };
+      }, [libId, path]);
+
+      if (state.phase === 'loading') {
+        return h(
+          'div',
+          { className: 'kb-office-loading' },
+          h('div', { className: 'kb-spinner' }),
+          h('span', null, '正在解析 Office 文档…'),
+        );
+      }
+      if (state.phase === 'error') {
+        return h('div', { className: 'kb-empty' }, h('b', null, '解析失败'), h('span', null, state.error));
+      }
+      const preview = state.preview || {};
+      if (preview.kind === 'docx') {
+        return h(
+          'div',
+          { className: 'kb-office' },
+          h('div', { className: 'kb-preview-note' }, `Word 文档 · ${preview.paragraphs ?? 0} 个段落`),
+          h('div', { className: 'kb-docx', dangerouslySetInnerHTML: { __html: preview.html || '' } }),
+        );
+      }
+      if (preview.kind === 'xlsx') {
+        const sheets = preview.sheets || [];
+        const current = sheets[Math.min(sheet, sheets.length - 1)] || { rows: [], columns: 0 };
+        const header = current.rows[0] || [];
+        const body = current.rows.slice(1);
+        return h(
+          'div',
+          { className: 'kb-office kb-sheetview' },
+          sheets.length > 1
+            ? h(
+                'div',
+                { className: 'kb-sheet-tabs' },
+                ...sheets.map((item, index) =>
+                  h(
+                    'button',
+                    {
+                      key: item.name,
+                      type: 'button',
+                      className: cx('kb-sheet-tab', index === sheet && 'on'),
+                      onClick: () => setSheet(index),
+                    },
+                    item.name,
+                  ),
+                ),
+              )
+            : null,
+          h('div', { className: 'kb-preview-note' }, `表格 · ${current.rows.length} 行 × ${current.columns} 列${preview.truncated ? '（已截断预览）' : ''}`),
+          h(
+            'div',
+            { className: 'kb-table-wrap kb-sheet-body' },
+            h(
+              'table',
+              { className: 'kb-table kb-sheet-table' },
+              h(
+                'thead',
+                null,
+                h(
+                  'tr',
+                  null,
+                  h('th', { className: 'kb-csv-rownum' }, '#'),
+                  ...Array.from({ length: current.columns }, (_, index) => h('th', { key: index }, header[index] ?? '')),
+                ),
+              ),
+              h(
+                'tbody',
+                null,
+                ...body.map((row, rowIndex) =>
+                  h(
+                    'tr',
+                    { key: rowIndex },
+                    h('td', { className: 'kb-csv-rownum' }, rowIndex + 2),
+                    ...Array.from({ length: current.columns }, (_, cellIndex) => h('td', { key: cellIndex }, row[cellIndex] ?? '')),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      if (preview.kind === 'pptx') {
+        return h(
+          'div',
+          { className: 'kb-office kb-slides' },
+          ...(preview.slides || []).map((slide) =>
+            h(
+              'div',
+              { key: slide.index, className: 'kb-slide' },
+              h('div', { className: 'kb-slide-index' }, `第 ${slide.index} 页`),
+              h('h3', { className: 'kb-slide-title' }, slide.title || '（无标题）'),
+              ...(slide.lines || []).map((line, index) => h('p', { key: index, className: 'kb-slide-line' }, line)),
+            ),
+          ),
+        );
+      }
+      return h(
+        'div',
+        { className: 'kb-empty' },
+        h(Icon, { name: 'file-text', size: 26 }),
+        h('b', null, '暂不支持这种 Office 格式'),
+        h('span', null, preview.reason || `${name || baseName(path)} 需要安装 LibreOffice 或另存为新格式后才能预览。`),
+      );
+    }
+
+    function FilePreview({ libId, path, file, onOpenLink }) {
+      const ext = extOf(path);
+      if (!file) return h(Skeleton, { lines: 6 });
+      if (ext === 'md' || ext === 'markdown' || ext === 'mdx') {
+        return h('div', { className: 'kb-md-wrap' }, h(MarkdownView, { text: file.content ?? '', libId, path, onOpenLink }));
+      }
+      if (IMAGE_EXT.has(ext)) return h(ImageView, { libId, path, name: baseName(path) });
+      if (ext === 'pdf') return h(PdfView, { libId, path, name: baseName(path) });
+      if (AUDIO_EXT.has(ext)) return h(MediaView, { libId, path, kind: 'audio', name: baseName(path) });
+      if (VIDEO_EXT.has(ext)) return h(MediaView, { libId, path, kind: 'video', name: baseName(path) });
+      if (OFFICE_EXT.has(ext)) return h(OfficeView, { libId, path, name: baseName(path) });
+      if ((ext === 'csv' || ext === 'tsv') && typeof file.content === 'string') {
+        return h(CsvView, { text: file.content, path });
+      }
+      if (typeof file.content === 'string' && !file.binary) {
+        return h(CodeView, { text: file.content, path });
+      }
+      return h(BinaryView, { libId, path, file });
     }
 
     // ---------------------------------------------------------------- styles
@@ -481,8 +1264,9 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 .kb-file-top{display:flex;align-items:center;gap:8px;min-width:0}
 .kb-file-path{font-size:var(--dsw-font-xxs-12-font-size,12px);color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kb-file-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.kb-content{flex:1;overflow:auto;padding:18px 22px 60px}
-.kb-editor{width:100%;height:100%;min-height:320px;resize:none;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--dsw-font-xs-13-font-size,13px);line-height:1.7;padding:0}
+.kb-content{flex:1;overflow:auto;padding:0;min-height:0}
+.kb-md-wrap{padding:20px 24px 60px;box-sizing:border-box;min-height:100%}
+.kb-editor{width:100%;height:100%;min-height:320px;resize:none;border:0;outline:none;background:transparent;color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--dsw-font-xs-13-font-size,13px);line-height:1.7;padding:18px 22px;box-sizing:border-box}
 .kb-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--dsw-alias-label-tertiary);font-size:var(--dsw-font-xs-13-font-size,13px);padding:40px}
 .kb-empty b{color:var(--dsw-alias-label-primary);font-size:var(--dsw-font-s-14-font-size,14px)}
 .kb-md{font-size:var(--dsw-font-xs-13-font-size,13px);line-height:1.75;max-width:860px}
@@ -566,6 +1350,99 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 .kb-file-item .kb-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .kb-file-item .kb-meta{font-size:var(--dsw-font-xxxs-11-font-size,11px);color:var(--dsw-alias-label-tertiary);flex:none}
 @media (max-width: 860px){.kb-side{width:240px;min-width:200px}}
+
+/* ---- preview: markdown / code / table / office ---- */
+.kb-md{font-size:var(--dsw-font-s-14-font-size,14px);line-height:1.78;max-width:920px;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.kb-md-p{margin:0 0 14px}
+.kb-md-h1,.kb-md-h2,.kb-md-h3,.kb-md-h4,.kb-md-h5,.kb-md-h6{color:var(--dsw-alias-label-primary);font-weight:650;line-height:1.35;margin:26px 0 12px}
+.kb-md-h1{font-size:var(--dsw-font-xl-24-font-size,24px);padding-bottom:8px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.kb-md-h2{font-size:var(--dsw-font-l-20-font-size,20px);padding-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.kb-md-h3{font-size:var(--dsw-font-m-18-font-size,18px)}
+.kb-md-h4{font-size:var(--dsw-font-s-14-font-size,15px)}
+.kb-md-h5,.kb-md-h6{font-size:var(--dsw-font-xs-13-font-size,13px);color:var(--dsw-alias-label-secondary)}
+.kb-md a{color:var(--dsw-alias-brand-primary);text-decoration:none}
+.kb-md a:hover{text-decoration:underline}
+.kb-md strong{font-weight:650}
+.kb-md ul,.kb-md ol{margin:0 0 14px;padding-left:26px}
+.kb-md li{margin:4px 0}
+.kb-md li>p{margin:0 0 6px}
+.kb-md li>ul,.kb-md li>ol{margin:4px 0}
+.kb-md .kb-md-task{list-style:none;margin-left:-22px}
+.kb-md .kb-md-task input{margin:0 8px 0 0;vertical-align:-1px}
+.kb-md blockquote{margin:0 0 14px;padding:2px 16px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1)}
+.kb-md blockquote .kb-md-p:last-child{margin-bottom:0}
+.kb-md hr{border:0;border-top:1px solid var(--dsw-alias-border-l1);margin:22px 0}
+.kb-md .kb-md-code{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:4px;padding:1px 5px;font-size:.88em;font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}
+.kb-md .kb-md-img{display:block;max-width:100%;height:auto;margin:10px 0;border-radius:8px;border:1px solid var(--dsw-alias-border-l1)}
+.kb-table-wrap{overflow:auto;margin:0 0 16px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;max-width:100%}
+.kb-table{border-collapse:separate;border-spacing:0;width:100%;font-size:var(--dsw-font-xs-13-font-size,13px);line-height:1.6}
+.kb-table th,.kb-table td{padding:7px 11px;border-bottom:1px solid var(--dsw-alias-border-l1);border-right:1px solid var(--dsw-alias-border-l1);text-align:left;vertical-align:top}
+.kb-table th:last-child,.kb-table td:last-child{border-right:0}
+.kb-table tbody tr:last-child td{border-bottom:0}
+.kb-table th{background:var(--dsw-alias-bg-layer-2);font-weight:600;position:sticky;top:0;z-index:1}
+.kb-table tbody tr:hover td{background:var(--dsw-alias-bg-layer-1)}
+.kb-fm{display:flex;flex-direction:column;gap:2px;margin:0 0 18px;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2);font-size:var(--dsw-font-xxs-12-font-size,12px)}
+.kb-fm-row{display:flex;gap:12px}
+.kb-fm-key{min-width:96px;color:var(--dsw-alias-label-tertiary)}
+.kb-fm-value{color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.kb-codeblock{margin:0 0 16px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.kb-codeblock-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);font-size:var(--dsw-font-xxs-12-font-size,11px);color:var(--dsw-alias-label-tertiary)}
+.kb-codeblock-lang{text-transform:lowercase;letter-spacing:.02em}
+.kb-codeblock-pre{margin:0;padding:12px 14px;overflow:auto;background:var(--dsw-alias-bg-layer-1);font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxs-12-font-size,12px);line-height:1.65;tab-size:2}
+.kb-copy{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11.5px;cursor:pointer;white-space:nowrap}
+.kb-copy:hover{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}
+.kb-codeview{display:flex;flex-direction:column;height:100%;min-height:0}
+.kb-codeview-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+.kb-codeview-lang{font-size:var(--dsw-font-xxs-12-font-size,11px);letter-spacing:.03em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary)}
+.kb-codeview-meta{font-size:var(--dsw-font-xxs-12-font-size,11px);color:var(--dsw-alias-label-tertiary)}
+.kb-codeview-body{flex:1;min-height:0;display:flex;overflow:auto;background:var(--dsw-alias-bg-layer-1);font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxs-12-font-size,12px);line-height:19.5px}
+.kb-codeview-gutter{position:sticky;left:0;z-index:1;flex:none;padding:12px 8px 24px 12px;text-align:right;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-layer-1);border-right:1px solid var(--dsw-alias-border-l1);user-select:none;font-variant-numeric:tabular-nums}
+.kb-codeview-gutter span{display:block;line-height:19.5px}
+.kb-codeview-pre{flex:1;min-width:0;margin:0;padding:12px 18px 24px 14px;white-space:pre;tab-size:2}
+.kb-codeview-body.wrap .kb-codeview-pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.kb-dataview{display:flex;flex-direction:column;height:100%;min-height:0}
+.kb-dataview-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+.kb-dataview-body{flex:1;min-height:0;margin:0;border:0;border-radius:0}
+.kb-csv-raw{flex:1;min-height:0;overflow:auto;white-space:pre;padding:12px 16px}
+.kb-csv-rownum{width:42px;min-width:42px;text-align:right;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-layer-2);font-variant-numeric:tabular-nums;user-select:none}
+.kb-sheet-table td{white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis}
+.kb-imageview{display:flex;flex-direction:column;height:100%;min-height:0}
+.kb-imageview-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none}
+.kb-image-stage{flex:1;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:18px;cursor:zoom-in;background:var(--dsw-alias-bg-layer-1)}
+.kb-image-stage.full{cursor:zoom-out;align-items:flex-start;justify-content:flex-start}
+.kb-image-stage img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
+.kb-image-stage.full img{max-width:none;max-height:none}
+.kb-pdfview{display:flex;flex-direction:column;height:100%;min-height:0}
+.kb-pdf-frame{flex:1;min-height:0;width:100%;border:0;background:var(--dsw-alias-bg-layer-2)}
+.kb-pdfview .kb-preview-note{flex:none;padding:6px 12px;border-top:1px solid var(--dsw-alias-border-l1)}
+.kb-mediaview{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;height:100%;padding:24px}
+.kb-media{max-width:100%;max-height:70vh;border-radius:8px;background:#000}
+.kb-preview-note{padding:8px 14px;font-size:var(--dsw-font-xxs-12-font-size,11px);color:var(--dsw-alias-label-tertiary);border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+.kb-office{height:100%;overflow:auto;padding:18px 22px 60px;box-sizing:border-box;display:flex;flex-direction:column}
+.kb-office .kb-preview-note{margin:-18px -22px 14px;flex:none;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.kb-office-loading{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dsw-alias-label-tertiary);font-size:12px}
+.kb-docx{max-width:900px;font-size:var(--dsw-font-s-14-font-size,14px);line-height:1.85;color:var(--dsw-alias-label-primary)}
+.kb-docx p{margin:0 0 12px}
+.kb-docx h1,.kb-docx h2,.kb-docx h3,.kb-docx h4,.kb-docx h5,.kb-docx h6{margin:22px 0 10px;font-weight:650;line-height:1.4}
+.kb-docx h1{font-size:22px}.kb-docx h2{font-size:19px}.kb-docx h3{font-size:17px}.kb-docx h4{font-size:15px}.kb-docx h5,.kb-docx h6{font-size:14px}
+.kb-docx .kb-docx-li{display:flex;gap:8px;margin:0 0 8px;padding-left:8px}
+.kb-docx .kb-docx-bullet{color:var(--dsw-alias-label-tertiary)}
+.kb-docx .kb-docx-table{border-collapse:collapse;margin:10px 0 18px;font-size:var(--dsw-font-xs-13-font-size,13px)}
+.kb-docx .kb-docx-table td{border:1px solid var(--dsw-alias-border-l2);padding:6px 10px;vertical-align:top}
+.kb-docx .kb-docx-table tr:first-child td{background:var(--dsw-alias-bg-layer-2);font-weight:600}
+.kb-sheetview{padding:0;gap:0}
+.kb-sheetview .kb-preview-note{margin:0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.kb-sheet-tabs{display:flex;gap:2px;padding:8px 12px 0;overflow:auto;flex:none;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.kb-sheet-tab{height:30px;padding:0 12px;border:1px solid transparent;border-bottom:0;border-radius:8px 8px 0 0;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer;white-space:nowrap}
+.kb-sheet-tab:hover{background:var(--dsw-alias-bg-layer-2)}
+.kb-sheet-tab.on{background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);font-weight:600}
+.kb-sheet-body{flex:1;min-height:0;margin:0;border:0;border-radius:0}
+.kb-slides{padding:18px 22px 60px;gap:14px}
+.kb-slide{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:16px 18px;background:var(--dsw-alias-bg-layer-1)}
+.kb-slide-index{font-size:11px;color:var(--dsw-alias-label-tertiary);letter-spacing:.04em}
+.kb-slide-title{margin:6px 0 10px;font-size:17px;font-weight:650}
+.kb-slide-line{margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.7}
+.kb-binary-actions{display:flex;gap:8px;margin-top:6px}
 `;
 
     function injectStyles() {
@@ -2022,7 +2899,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
                   onContextMenu: (event) => openMenuAt(event, fileMenuItems(opened.path)),
                 },
                 opened.binary
-                  ? h('div', { className: 'kb-empty' }, h('b', null, '二进制文件'), h('span', null, `${opened.size} 字节，暂不支持内联预览。`))
+                  ? h(FilePreview, { libId: activeId, path: opened.path, file: opened, onOpenLink: openFile })
                   : mode === 'edit'
                     ? h('textarea', {
                         className: 'kb-editor',
@@ -2036,7 +2913,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
                           }
                         },
                       })
-                    : h(Markdown, { text: opened.content }),
+                    : h(FilePreview, { libId: activeId, path: opened.path, file: opened, onOpenLink: openFile }),
               ),
             );
 
@@ -2194,11 +3071,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         setError('');
         try {
           const payload = await getJson(`/api/kb/file?lib=${encodeURIComponent(libId)}&path=${encodeURIComponent(path)}`);
-          if (payload.binary) {
-            setError('二进制文件，暂不支持预览。');
-          } else {
-            setFile(payload);
-          }
+          setFile(payload);
         } catch (cause) {
           setError(errorText(cause));
         } finally {
@@ -2279,7 +3152,11 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
               onClick: () => openFile(file.path),
             }),
           ),
-          h('div', { className: 'kb-pane-doc' }, h(Markdown, { text: file.content })),
+          h(
+            'div',
+            { className: 'kb-pane-doc', style: { padding: 0, overflow: 'auto' } },
+            h(FilePreview, { libId, path: file.path, file, onOpenLink: openFile }),
+          ),
         );
       }
 
@@ -2388,8 +3265,8 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         ),
         h(
           'div',
-          { className: 'kb-content' },
-          file.binary ? h('div', { className: 'kb-empty' }, h('b', null, '二进制文件'), h('span', null, `${file.size} 字节。`)) : h(Markdown, { text: file.content }),
+          { className: 'kb-content', style: { padding: 0, overflow: 'auto' } },
+          h(FilePreview, { libId: parsed.lib, path: file.path, file }),
         ),
       );
     }

@@ -28,6 +28,14 @@
 - **Round trips in chat**: type `@kb:` to search names and body text, and the pick inserts `@kb:<library>/<path>`; "Save to knowledge base" under an assistant reply writes the body back with front-matter, undoable for 30 seconds.
 - **Nine model tools**: `kb_list` / `kb_find` / `kb_read` / `kb_search` / `kb_write` / `kb_append` / `kb_create` / `kb_move` / `kb_delete`; writes must carry an `expectedHash` so nobody overwrites another edit.
 
+### File preview
+
+- **Markdown**: a GFM subset renderer with heading anchors, aligned tables, task lists, nested lists, quotes, fenced code (language label + copy), front-matter cards, images and relative links, styled to match DSH. DSH's Markdown component is not exposed as a public Client module (plugins are explicitly not allowed to import other Client packages), so the renderer is implemented locally against the same theme tokens and interaction.
+- **Code / text**: line numbers, wrapping, copy-all and a language label for 60+ extensions plus extensionless files such as `Dockerfile` and `Makefile`.
+- **Images / audio / video**: fit-to-pane images with intrinsic-size toggle and open-in-window; native media players.
+- **PDF**: embedded in the browser's built-in PDF viewer.
+- **Office**: `docx` / `xlsx` / `pptx` are parsed on the Host (zip + XML, no LibreOffice) — Word to rich text, Excel to multi-sheet tables with headers, row numbers and sheet tabs, PowerPoint to per-slide text; legacy `doc` / `xls` / `ppt` get a clear message. Excel dates and custom number formats show their stored values.
+
 ## What it changes, what it leaves alone
 
 | Changes | Leaves alone |

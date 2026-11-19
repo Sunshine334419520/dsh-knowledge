@@ -28,6 +28,14 @@
 - **对话里进出都有路**：输入 `@kb:` 搜文件名与正文，选中插入 `@kb:<库名>/<路径>`；助手回复下方「保存到知识库」把正文加 front-matter 写回，30 秒内可撤销。
 - **九个模型工具**：`kb_list` / `kb_find` / `kb_read` / `kb_search` / `kb_write` / `kb_append` / `kb_create` / `kb_move` / `kb_delete`；写入必须带 `expectedHash`，避免覆盖别人的改动。
 
+### 文件预览
+
+- **Markdown**：GFM 子集渲染——标题锚点、表格对齐、任务列表、嵌套列表、引用、代码块（语言标签 + 复制）、front-matter 卡片、图片与相对链接；版式与 DSH 对齐。DSH 的 Markdown 组件没有作为公共 Client 模块暴露（框架明确不允许插件 import 其它 Client 包），所以按同样的交互和主题 token 自实现。
+- **代码 / 文本**：行号、自动换行、全文复制、语言标签，覆盖 60+ 种扩展名与 `Dockerfile` / `Makefile` 等无扩展名文件。
+- **图片 / 音视频**：图片适应窗口、点击查看原始大小、新窗口打开；音频与视频用原生播放器。
+- **PDF**：浏览器内置 PDF 查看器内嵌预览。
+- **Office**：`docx` / `xlsx` / `pptx` 在宿主侧直接解析（zip + XML，不依赖 LibreOffice）——Word 转富文本、Excel 转多工作表表格（表头/行号/工作表切换）、PPT 转分页文本；旧版 `doc` / `xls` / `ppt` 给出明确提示。Excel 日期与自定义数字格式按原始值显示。
+
 ## 它改变什么，不改变什么
 
 | 改变 | 不改变 |
