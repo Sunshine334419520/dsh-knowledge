@@ -201,6 +201,31 @@ await test('已有 .kb 标记的目录：接管并补齐缺的种子', async (di
   assert.ok(fs.existsSync(path.join(root, 'notes', 'a.md')));
 });
 
+/* ---------- 7b. 同步结果的三种形态 ---------- */
+await test('gitSync：已是最新 / 提交几项 / 目录创建也自动提交', async (dir) => {
+  const remote = bare(dir);
+  const created = await store.createLibrary({ name: 'idle', parent: path.join(dir, 'p'), remote, folder: 'idle' });
+  const root = created.library.root;
+
+  const idle = await store.gitSync(root);
+  assert.equal(idle.ok, true, JSON.stringify(idle));
+  assert.equal(idle.unchanged, true, '没有改动时应报告 unchanged');
+  assert.equal(idle.committedCount, 0);
+
+  fs.writeFileSync(path.join(root, 'notes', 'a.md'), '# a\n');
+  const changed = await store.gitSync(root);
+  assert.equal(changed.ok, true, JSON.stringify(changed));
+  assert.equal(changed.committed, true);
+  assert.equal(changed.committedCount, 1, '应报告 1 项改动');
+  assert.equal(changed.unchanged, false);
+
+  const folder = await store.createFolder(root, 'notes/来不及');
+  assert.ok(folder.commit, '建目录也要走一次自动提交（空目录本身不入 git，返回 clean）');
+  fs.writeFileSync(path.join(root, 'notes', '来不及', '.gitkeep'), '');
+  const status = await store.gitStatus(root);
+  assert.equal(status.dirty, 1);
+});
+
 /* ---------- 7. 分叉后同步 ---------- */
 await test('远端有新提交：gitSync 合并后推送', async (dir) => {
   const remote = bare(dir);
