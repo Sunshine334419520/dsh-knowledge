@@ -314,6 +314,155 @@ window.__ModuleLoader__.load({
       return CODE_LANG[extOf(filePath)] || (extOf(filePath) ? extOf(filePath).toUpperCase() : 'Text');
     }
 
+    // --- 轻量语法高亮：按语言切 token，渲染成带主题色的 span ---
+
+    const HL_JS_KEYWORDS =
+      'const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|class|extends|new|super|this|import|export|from|as|default|async|await|try|catch|finally|throw|typeof|instanceof|in|of|delete|void|yield|static|get|set|true|false|null|undefined|interface|type|enum|implements|public|private|protected|readonly|declare|namespace';
+    const HL_PY_KEYWORDS =
+      'def|class|return|if|elif|else|for|while|in|is|not|and|or|import|from|as|try|except|finally|raise|with|lambda|yield|async|await|pass|break|continue|global|nonlocal|assert|del|True|False|None|self|print';
+    const HL_SH_KEYWORDS =
+      'if|then|else|elif|fi|for|while|do|done|case|esac|function|return|export|local|readonly|source|echo|exit|set|unset|shift|eval|exec|trap|alias|cd|pwd';
+    const HL_SQL_KEYWORDS =
+      'select|from|where|insert|into|values|update|set|delete|create|table|alter|drop|index|join|left|right|inner|outer|on|group|by|order|having|limit|offset|as|and|or|not|null|is|in|exists|between|like|distinct|union|all|case|when|then|else|end|primary|key|foreign|references|default|unique|check|constraint|database|view|begin|commit|rollback';
+    const HL_CSS_AT = 'media|supports|import|charset|font-face|keyframes|layer|container|property|page';
+
+    function hlRules(lang) {
+      const key = String(lang || '').toLowerCase();
+      const js = /^(js|javascript|mjs|cjs|jsx|ts|typescript|tsx|mts|cts)$/;
+      const py = /^(py|python|python3)$/;
+      const sh = /^(sh|bash|zsh|shell|fish|ps1|powershell|cmd|bat)$/;
+      const sql = /^(sql|mysql|postgres|postgresql|sqlite)$/;
+      const html = /^(html|htm|xml|svg|vue|svelte)$/;
+      const css = /^(css|scss|less)$/;
+      const yaml = /^(yaml|yml)$/;
+      const toml = /^(toml|ini|conf|properties|env)$/;
+      const json = /^(json|jsonc|json5)$/;
+      if (js.test(key)) {
+        return [
+          { type: 'comment', re: /\/\/[^\n]*|\/\*[\s\S]*?\*\//g },
+          { type: 'string', re: /'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`/g },
+          { type: 'number', re: /\b(?:0[xX][\da-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g },
+          { type: 'keyword', re: new RegExp(`\\b(?:${HL_JS_KEYWORDS})\\b`, 'g') },
+          { type: 'func', re: /\b[A-Za-z_$][\w$]*(?=\s*\()/g },
+          { type: 'punct', re: /[{}()[\].,;:+\-*/%=<>!&|?~^]+/g },
+        ];
+      }
+      if (py.test(key)) {
+        return [
+          { type: 'comment', re: /#[^\n]*/g },
+          { type: 'string', re: /'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"/g },
+          { type: 'decorator', re: /@[A-Za-z_][\w.]*/g },
+          { type: 'number', re: /\b(?:\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g },
+          { type: 'keyword', re: new RegExp(`\\b(?:${HL_PY_KEYWORDS})\\b`, 'g') },
+          { type: 'func', re: /\b[A-Za-z_]\w*(?=\s*\()/g },
+          { type: 'punct', re: /[{}()[\].,;:+\-*/%=<>!&|?~^]+/g },
+        ];
+      }
+      if (sh.test(key)) {
+        return [
+          { type: 'comment', re: /#[^\n]*/g },
+          { type: 'string', re: /'(?:[^']*)'|"(?:\\.|[^"\\])*"/g },
+          { type: 'variable', re: /\$\{[^}]+\}|\$[\w@#?*!$-]+/g },
+          { type: 'keyword', re: new RegExp(`\\b(?:${HL_SH_KEYWORDS})\\b`, 'g') },
+          { type: 'number', re: /\b\d+(?:\.\d+)?\b/g },
+          { type: 'flag', re: /(?:^|\s)--?[\w-]+/g },
+          { type: 'punct', re: /[{}()[\]|&;<>]+/g },
+        ];
+      }
+      if (sql.test(key)) {
+        return [
+          { type: 'comment', re: /--[^\n]*|\/\*[\s\S]*?\*\//g },
+          { type: 'string', re: /'(?:''|[^'])*'/g },
+          { type: 'keyword', re: new RegExp(`\\b(?:${HL_SQL_KEYWORDS})\\b`, 'gi') },
+          { type: 'number', re: /\b\d+(?:\.\d+)?\b/g },
+          { type: 'punct', re: /[(),;.*=<>+-]+/g },
+        ];
+      }
+      if (html.test(key)) {
+        return [
+          { type: 'comment', re: /<!--[\s\S]*?-->/g },
+          { type: 'keyword', re: /<!doctype[^>]*>/gi },
+          { type: 'tag', re: /<\/?[A-Za-z][\w:.-]*/g },
+          { type: 'attr', re: /[A-Za-z_:][-\w:.]*(?=\s*=)/g },
+          { type: 'string', re: /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g },
+          { type: 'punct', re: /\/?>/g },
+        ];
+      }
+      if (css.test(key)) {
+        return [
+          { type: 'comment', re: /\/\*[\s\S]*?\*\//g },
+          { type: 'string', re: /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g },
+          { type: 'keyword', re: new RegExp(`@(?:${HL_CSS_AT})\\b`, 'g') },
+          { type: 'prop', re: /[-a-zA-Z]+(?=\s*:)/g },
+          { type: 'number', re: /\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|deg|fr)?\b/g },
+          { type: 'string', re: /#[0-9a-fA-F]{3,8}\b/g },
+          { type: 'punct', re: /[{}();:,]/g },
+        ];
+      }
+      if (json.test(key)) {
+        return [
+          { type: 'prop', re: /"(?:\\.|[^"\\])*"(?=\s*:)/g },
+          { type: 'string', re: /"(?:\\.|[^"\\])*"/g },
+          { type: 'number', re: /-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g },
+          { type: 'keyword', re: /\b(?:true|false|null)\b/g },
+          { type: 'punct', re: /[{}[\],:]/g },
+        ];
+      }
+      if (yaml.test(key)) {
+        return [
+          { type: 'comment', re: /#[^\n]*/g },
+          { type: 'prop', re: /^[ \t-]*[\w.$-]+(?=\s*:)/gm },
+          { type: 'string', re: /"(?:\\.|[^"\\])*"|'(?:''|[^'])*'/g },
+          { type: 'keyword', re: /\b(?:true|false|null|yes|no|on|off)\b/gi },
+          { type: 'number', re: /-?\b\d+(?:\.\d+)?\b/g },
+          { type: 'punct', re: /^[ \t-]*(?:-|:)[ \t]*/gm },
+        ];
+      }
+      if (toml.test(key)) {
+        return [
+          { type: 'comment', re: /[#;][^\n]*/g },
+          { type: 'keyword', re: /^[ \t]*\[[^\]\n]+\]/gm },
+          { type: 'prop', re: /^[ \t]*[\w.-]+(?=\s*=)/gm },
+          { type: 'string', re: /"(?:\\.|[^"\\])*"|'(?:[^']*)'/g },
+          { type: 'number', re: /-?\b\d+(?:\.\d+)?\b/g },
+          { type: 'punct', re: /=/g },
+        ];
+      }
+      return null;
+    }
+
+    function highlightCode(code, lang) {
+      const text = String(code ?? '');
+      const rules = hlRules(lang);
+      if (!rules || text.length > 120000) return [text];
+      const compiled = rules.map((rule) => ({
+        type: rule.type,
+        re: new RegExp(rule.re.source, rule.re.flags.includes('g') ? rule.re.flags : `${rule.re.flags}g`),
+      }));
+      const nodes = [];
+      let pos = 0;
+      let key = 0;
+      while (pos < text.length) {
+        let best = null;
+        for (const rule of compiled) {
+          rule.re.lastIndex = pos;
+          const match = rule.re.exec(text);
+          if (!match) continue;
+          if (!best || match.index < best.index) {
+            best = { index: match.index, end: match.index + match[0].length, type: rule.type, text: match[0] };
+          }
+        }
+        if (!best || best.index >= text.length) break;
+        if (best.index > pos) nodes.push(text.slice(pos, best.index));
+        if (best.text) {
+          nodes.push(h('span', { key: `hl${key++}`, className: `kb-hl-${best.type}` }, best.text));
+        }
+        pos = Math.max(best.end, pos + 1);
+      }
+      if (pos < text.length) nodes.push(text.slice(pos));
+      return nodes;
+    }
+
     // --- Markdown 解析（CommonMark / GFM 常用子集） ---
 
     function mdHeading(line) {
@@ -773,16 +922,18 @@ window.__ModuleLoader__.load({
     }
 
     function CodeBlock({ text, lang }) {
+      const key = String(lang || '').toLowerCase();
+      const label = CODE_LANG[key] || (lang ? lang : 'text');
       return h(
         'div',
         { className: 'kb-codeblock' },
         h(
           'div',
           { className: 'kb-codeblock-head' },
-          h('span', { className: 'kb-codeblock-lang' }, lang || 'text'),
+          h('span', { className: 'kb-codeblock-lang' }, label),
           h(CopyButton, { text, label: '复制代码' }),
         ),
-        h('pre', { className: 'kb-codeblock-pre' }, h('code', null, text)),
+        h('pre', { className: 'kb-codeblock-pre' }, h('code', null, ...highlightCode(text, lang))),
       );
     }
 
@@ -877,6 +1028,7 @@ window.__ModuleLoader__.load({
       const [wrap, setWrap] = useState(false);
       const content = String(text ?? '');
       const lines = content ? content.split('\n') : [''];
+      const tokens = useMemo(() => highlightCode(content, extOf(path)), [content, path]);
       return h(
         'div',
         { className: 'kb-codeview' },
@@ -897,7 +1049,7 @@ window.__ModuleLoader__.load({
             { className: 'kb-codeview-gutter', 'aria-hidden': 'true' },
             ...lines.map((_, index) => h('span', { key: index }, index + 1)),
           ),
-          h('pre', { className: 'kb-codeview-pre' }, h('code', null, content)),
+          h('pre', { className: 'kb-codeview-pre' }, h('code', null, ...tokens)),
         ),
       );
     }
@@ -1343,8 +1495,16 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 .kb-pane{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .kb-pane-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;flex-wrap:wrap}
 .kb-pane-body{flex:1;overflow:auto;min-height:0;padding:6px 8px 20px}
-.kb-pane-doc{padding:14px 16px 40px;overflow:auto;flex:1;min-height:0}
-.kb-pane-doc .kb-md{font-size:var(--dsw-font-xs-13-font-size,13px);max-width:none}
+.kb-pane-doc{padding:0;overflow:auto;flex:1;min-height:0}
+.kb-doc-pad{display:flex;flex-direction:column;height:100%;min-height:0;box-sizing:border-box;padding:8px;overflow:auto}
+.kb-pane-doc .kb-md{font-size:var(--dsw-font-xs-13-font-size,13px);max-width:none;line-height:1.72}
+.kb-pane-doc .kb-md-wrap{padding:0 0 32px;min-height:0}
+.kb-pane-doc .kb-md-h1{font-size:19px;margin-top:14px}
+.kb-pane-doc .kb-md-h2{font-size:17px;margin-top:18px}
+.kb-pane-doc .kb-md-h3{font-size:15px;margin-top:16px}
+.kb-pane-doc .kb-md-p{margin-bottom:11px}
+.kb-pane-doc .kb-md-list{margin-bottom:11px}
+.kb-pane-doc .kb-codeblock,.kb-pane-doc .kb-table-wrap{margin-bottom:12px}
 .kb-file-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;font-size:var(--dsw-font-xs-13-font-size,13px);cursor:pointer;color:var(--dsw-alias-label-primary)}
 .kb-file-item:hover{background:var(--dsw-alias-bg-layer-2)}
 .kb-file-item .kb-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1387,7 +1547,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 .kb-fm-value{color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .kb-codeblock{margin:0 0 16px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
 .kb-codeblock-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);font-size:var(--dsw-font-xxs-12-font-size,11px);color:var(--dsw-alias-label-tertiary)}
-.kb-codeblock-lang{text-transform:lowercase;letter-spacing:.02em}
+.kb-codeblock-lang{letter-spacing:.02em;opacity:.85}
 .kb-codeblock-pre{margin:0;padding:12px 14px;overflow:auto;background:var(--dsw-alias-bg-layer-1);font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:var(--dsw-font-xxs-12-font-size,12px);line-height:1.65;tab-size:2}
 .kb-copy{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);font-size:11.5px;cursor:pointer;white-space:nowrap}
 .kb-copy:hover{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}
@@ -1443,6 +1603,35 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 .kb-slide-title{margin:6px 0 10px;font-size:17px;font-weight:650}
 .kb-slide-line{margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.7}
 .kb-binary-actions{display:flex;gap:8px;margin-top:6px}
+
+/* ---- syntax highlighting ---- */
+.kb-hl-keyword{color:var(--dsw-alias-brand-primary)}
+.kb-hl-string{color:var(--dsw-alias-state-success-primary,#2ea043)}
+.kb-hl-number{color:var(--dsw-alias-state-warning-primary,#d29922)}
+.kb-hl-comment{color:var(--dsw-alias-label-tertiary);font-style:italic}
+.kb-hl-tag{color:var(--dsw-alias-state-error-primary,#e5534b)}
+.kb-hl-attr{color:var(--dsw-alias-state-warning-primary,#d29922)}
+.kb-hl-prop{color:var(--dsw-alias-label-primary);font-weight:550}
+.kb-hl-func{color:var(--dsw-alias-brand-primary)}
+.kb-hl-variable{color:var(--dsw-alias-state-warning-primary,#d29922)}
+.kb-hl-decorator{color:var(--dsw-alias-state-warning-primary,#d29922)}
+.kb-hl-flag{color:var(--dsw-alias-state-success-primary,#2ea043)}
+.kb-hl-punct{color:var(--dsw-alias-label-tertiary)}
+
+/* ---- markdown polish ---- */
+.kb-md a{text-underline-offset:2px}
+.kb-md a[target="_blank"]::after{content:"↗";font-size:.75em;margin-left:2px;opacity:.6;text-decoration:none}
+.kb-md-internal{color:var(--dsw-alias-brand-primary)}
+.kb-md blockquote{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 55%,transparent);border-radius:0 6px 6px 0}
+.kb-md input[type="checkbox"]{accent-color:var(--dsw-alias-brand-primary);width:13px;height:13px}
+.kb-table tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 45%,transparent)}
+.kb-table tbody tr:hover td{background:var(--dsw-alias-bg-layer-2)}
+.kb-table th{white-space:nowrap}
+.kb-table td{min-width:56px}
+.kb-pane-doc .kb-table{font-size:12px}
+.kb-pane-doc .kb-table th,.kb-pane-doc .kb-table td{padding:5px 8px}
+.kb-pane-doc .kb-codeblock-pre{font-size:11.5px;padding:10px 12px}
+.kb-pane-doc .kb-md .kb-md-img{border-radius:6px}
 `;
 
     function injectStyles() {
@@ -2995,10 +3184,30 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
     }
 
     // 右栏「知识库」页：库 -> 目录 -> 文件，单栏浏览。
-    function KbBrowserPane() {
+    // 记住上次位置：切走标签页、组件被卸载后回来仍停在同一个文件。
+    const kbPaneMemory = { libId: '', dir: '', filePath: '' };
+
+    function libraryAbsolutePath(root, rel) {
+      const base = String(root || '').replaceAll('\\', '/').replace(/\/+$/, '');
+      const clean = String(rel || '').replaceAll('\\', '/').replace(/^\.?\/+/, '');
+      return clean ? `${base}/${clean}` : base;
+    }
+
+    // 与 DSH 的 workspace-path 语法一致：\ -> /，逐段编码、保留 ':'。
+    function sessionFileAddress(sessionId, absolutePath) {
+      const normalized = String(absolutePath || '').replaceAll('\\', '/').replace(/^\.\//, '');
+      const encoded = normalized
+        .split('/')
+        .map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':'))
+        .join('/');
+      return `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encoded}`;
+    }
+
+    function KbBrowserPane(props) {
+      const sessionId = props?.sessionId;
       const [libraries, setLibraries] = useState([]);
-      const [libId, setLibId] = useState('');
-      const [dir, setDir] = useState('');
+      const [libId, setLibId] = useState(kbPaneMemory.libId || '');
+      const [dir, setDir] = useState(kbPaneMemory.dir || '');
       const [entries, setEntries] = useState([]);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState('');
@@ -3014,7 +3223,10 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
             if (!alive) return;
             const rows = Array.isArray(payload.libraries) ? payload.libraries : [];
             setLibraries(rows);
-            const preferred = rows.find((row) => row.id === payload.activeId) || rows[0];
+            const preferred =
+              rows.find((row) => row.id === kbPaneMemory.libId) ||
+              rows.find((row) => row.id === payload.activeId) ||
+              rows[0];
             if (preferred) setLibId(preferred.id);
           })
           .catch((cause) => {
@@ -3037,6 +3249,9 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
             const payload = await getJson(`/api/kb/tree?lib=${encodeURIComponent(libraryId)}&path=${encodeURIComponent(path || '')}`);
             setEntries(payload.entries ?? []);
             setDir(path || '');
+            kbPaneMemory.libId = libraryId;
+            kbPaneMemory.dir = path || '';
+            kbPaneMemory.filePath = '';
           } catch (cause) {
             setError(errorText(cause));
             setEntries([]);
@@ -3049,8 +3264,12 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 
       useEffect(() => {
         if (!libId) return;
+        if (kbPaneMemory.libId === libId && kbPaneMemory.filePath) {
+          openFile(kbPaneMemory.filePath);
+          return;
+        }
         setFile(null);
-        loadDir(libId, '');
+        loadDir(libId, kbPaneMemory.dir || '');
       }, [libId, loadDir]);
 
       if (booting) {
@@ -3072,11 +3291,48 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         try {
           const payload = await getJson(`/api/kb/file?lib=${encodeURIComponent(libId)}&path=${encodeURIComponent(path)}`);
           setFile(payload);
+          kbPaneMemory.libId = libId;
+          kbPaneMemory.dir = parentDir(payload.path);
+          kbPaneMemory.filePath = payload.path;
         } catch (cause) {
           setError(errorText(cause));
         } finally {
           setLoading(false);
         }
+      };
+
+      const closeFile = () => {
+        setFile(null);
+        kbPaneMemory.filePath = '';
+        loadDir(libId, kbPaneMemory.dir || '');
+      };
+
+      // 文件一律交给 DSH 自己的文档预览：新建一个右栏标签页，不在这里自绘。
+      const openEntry = (entry) => {
+        if (entry.type === 'dir') {
+          loadDir(libId, entry.path);
+          return;
+        }
+        const library = libraries.find((row) => row.id === libId);
+        const absolutePath = libraryAbsolutePath(library?.root, entry.path);
+        const address = sessionId ? sessionFileAddress(sessionId, absolutePath) : '';
+        const right = safeGet('sidebarRight');
+        if (address && right) {
+          try {
+            if (typeof right.openResourceIn === 'function') {
+              right.openResourceIn(sessionId, address, { destination: 'sidebar' });
+              return;
+            }
+            if (typeof right.openResource === 'function') {
+              right.openResource(address, { destination: 'sidebar' });
+              return;
+            }
+          } catch (cause) {
+            reportClientError('preview:dsh', cause);
+          }
+        }
+        // 没有会话或右栏服务时退回内置预览（正常右栏场景不会走到这里）。
+        openFile(entry.path);
       };
 
       const crumbs = (() => {
@@ -3110,7 +3366,14 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
               {
                 className: 'kb-select',
                 value: libId,
-                onChange: (event) => setLibId(event.target.value),
+                onChange: (event) => {
+                  const nextId = event.target.value;
+                  kbPaneMemory.libId = nextId;
+                  kbPaneMemory.dir = '';
+                  kbPaneMemory.filePath = '';
+                  setFile(null);
+                  setLibId(nextId);
+                },
               },
               ...libraries.map((row) => h('option', { key: row.id, value: row.id }, row.name)),
             )
@@ -3143,7 +3406,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
           h(
             'div',
             { className: 'kb-pane-head' },
-            h(IconButton, { icon: 'up', label: '返回目录', onClick: () => setFile(null) }),
+            h(IconButton, { icon: 'up', label: '返回目录', onClick: closeFile }),
             h('span', { className: 'kb-file-path', title: file.path }, file.path),
             h('span', { className: 'kb-spacer' }),
             h(IconButton, {
@@ -3154,8 +3417,12 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
           ),
           h(
             'div',
-            { className: 'kb-pane-doc', style: { padding: 0, overflow: 'auto' } },
-            h(FilePreview, { libId, path: file.path, file, onOpenLink: openFile }),
+            { className: 'kb-pane-doc' },
+            h(
+              'div',
+              { className: 'kb-doc-pad' },
+              h(FilePreview, { libId, path: file.path, file, onOpenLink: openFile }),
+            ),
           ),
         );
       }
@@ -3177,7 +3444,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
               {
                 key: entry.path,
                 className: 'kb-file-item',
-                onClick: () => (entry.type === 'dir' ? loadDir(libId, entry.path) : openFile(entry.path)),
+                onClick: () => openEntry(entry),
                 title: entry.path,
               },
               h(
@@ -3266,7 +3533,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         h(
           'div',
           { className: 'kb-content', style: { padding: 0, overflow: 'auto' } },
-          h(FilePreview, { libId: parsed.lib, path: file.path, file }),
+          h('div', { className: 'kb-doc-pad' }, h(FilePreview, { libId: parsed.lib, path: file.path, file })),
         ),
       );
     }
@@ -3407,7 +3674,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
                     priority: 'extension',
                     title: () => '知识库',
                     canOpen: (address) => String(address ?? '').startsWith('kb://'),
-                    keepMounted: false,
+                    keepMounted: true,
                   }),
                 'knowledge-base: right file tab',
               );
@@ -3424,6 +3691,7 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
                     id: KB_PAGE_ID,
                     kind: KB_PAGE_KIND,
                     title: () => '知识库',
+                    keepMounted: true,
                     guide: [
                       {
                         id: 'browse',

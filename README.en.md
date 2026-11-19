@@ -30,8 +30,9 @@
 
 ### File preview
 
-- **Markdown**: a GFM subset renderer with heading anchors, aligned tables, task lists, nested lists, quotes, fenced code (language label + copy), front-matter cards, images and relative links, styled to match DSH. DSH's Markdown component is not exposed as a public Client module (plugins are explicitly not allowed to import other Client packages), so the renderer is implemented locally against the same theme tokens and interaction.
-- **Code / text**: line numbers, wrapping, copy-all and a language label for 60+ extensions plus extensionless files such as `Dockerfile` and `Makefile`.
+- **The right pane lists, DSH previews**: the right-pane knowledge base page browses directories; clicking a file opens a new tab in DSH's native document preview (same as the Files panel), so Markdown, code, tables, PDF and Office are rendered by DSH itself. Switching away and back keeps the directory and list position.
+- **Main-panel preview**: the plugin's own Markdown renderer — a GFM subset with heading anchors, aligned tables, task lists, nested lists, quotes, fenced code (language label + copy), front-matter cards, images and relative links, plus lightweight syntax highlighting. DSH's Markdown component is not exposed as a public Client module (plugins are explicitly not allowed to import other Client packages), so the renderer is implemented locally against the same theme tokens and interaction.
+- **Code / text**: line numbers, wrapping, copy-all, language label and syntax highlighting for 60+ extensions plus extensionless files such as `Dockerfile` and `Makefile`.
 - **Images / audio / video**: fit-to-pane images with intrinsic-size toggle and open-in-window; native media players.
 - **PDF**: embedded in the browser's built-in PDF viewer.
 - **Office**: `docx` / `xlsx` / `pptx` are parsed on the Host (zip + XML, no LibreOffice) — Word to rich text, Excel to multi-sheet tables with headers, row numbers and sheet tabs, PowerPoint to per-slide text; legacy `doc` / `xls` / `ppt` get a clear message. Excel dates and custom number formats show their stored values.
