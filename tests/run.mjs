@@ -418,6 +418,41 @@ await test('askpass.bat：CRLF + 纯 cmd 取值，不依赖 node', () => {
   assert.ok(!/node|\.mjs|%\*/.test(text), 'bat 里不该有 node 或额外参数');
 });
 
+await test('老库迁移：.kb 曾被提交时，同步会把它从索引里摘掉', async (dir) => {
+  const remote = bare(dir, 'legacy-remote.git');
+  const parent = path.join(dir, 'legacy');
+  const created = await store.createLibrary({
+    name: '老库',
+    parent,
+    folder: 'notes',
+    remote,
+    git: true,
+    probe: true,
+  });
+  const lib = created.library;
+  const root = lib.root;
+
+  // 还原成旧版本的样子：config.json 被跟踪、.gitignore 是旧写法
+  fs.writeFileSync(path.join(root, '.gitignore'), '.kb/trash/\n.kb/tmp/\n.DS_Store\nThumbs.db\n', 'utf8');
+  gitCmd(root, 'add', '-A');
+  gitCmd(root, 'commit', '--quiet', '-m', 'legacy: track marker');
+  gitCmd(root, 'push', '--quiet', '-u', 'origin', 'main');
+  assert.ok(gitCmd(root, 'ls-files', '.kb').includes('config.json'));
+
+  const synced = await store.gitSync(root);
+  assert.equal(synced.ok, true);
+  assert.equal(synced.internalUntracked, true);
+
+  assert.equal(gitCmd(root, 'ls-files', '.kb').trim(), '');
+  assert.ok(fs.existsSync(path.join(root, '.kb', 'config.json')), '.kb/config.json 要留在磁盘上');
+  assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\.kb\/$/m);
+
+  // 再同步一次：现在应该什么都不用做
+  const again = await store.gitSync(root);
+  assert.equal(again.internalUntracked, false);
+  assert.equal(again.unchanged, true);
+});
+
 await test('删除库：只摘注册表保留文件，deleteFiles 才连文件一起删', async (dir) => {
   const parent = path.join(dir, 'parent');
   fs.mkdirSync(parent, { recursive: true });
