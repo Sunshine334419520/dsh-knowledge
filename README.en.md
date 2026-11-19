@@ -30,7 +30,7 @@
 
 ### File preview
 
-- **The right pane lists, DSH previews**: the right-pane knowledge base page browses directories; clicking a file opens a new tab in DSH's native document preview (same as the Files panel), so Markdown, code, tables, PDF and Office are rendered by DSH itself. Switching away and back keeps the directory and list position.
+- **The right pane lists, DSH previews**: the right-pane knowledge base page is a directory tree — clicking a folder expands or collapses it in place without navigating away, and the tab carries a knowledge-base icon. Clicking a file opens a new tab in DSH's native document preview (same as the Files panel), so Markdown, code, tables, PDF and Office are rendered by DSH itself. Switching away and back keeps the expanded folders and cached entries.
 - **Main-panel preview**: the plugin's own Markdown renderer — a GFM subset with heading anchors, aligned tables, task lists, nested lists, quotes, fenced code (language label + copy), front-matter cards, images and relative links, plus lightweight syntax highlighting. DSH's Markdown component is not exposed as a public Client module (plugins are explicitly not allowed to import other Client packages), so the renderer is implemented locally against the same theme tokens and interaction.
 - **Code / text**: line numbers, wrapping, copy-all, language label and syntax highlighting for 60+ extensions plus extensionless files such as `Dockerfile` and `Makefile`.
 - **Images / audio / video**: fit-to-pane images with intrinsic-size toggle and open-in-window; native media players.

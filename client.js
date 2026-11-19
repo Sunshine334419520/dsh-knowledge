@@ -1632,6 +1632,11 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
 .kb-pane-doc .kb-table th,.kb-pane-doc .kb-table td{padding:5px 8px}
 .kb-pane-doc .kb-codeblock-pre{font-size:11.5px;padding:10px 12px}
 .kb-pane-doc .kb-md .kb-md-img{border-radius:6px}
+.kb-tab-icon{flex:none;display:block;align-self:center;margin-right:4px;color:var(--dsw-alias-label-secondary)}
+.kb-tree-row{padding-top:5px;padding-bottom:5px}
+.kb-tree-row .kb-caret{width:14px;flex:none;color:var(--dsw-alias-label-tertiary)}
+.kb-tree-row:hover{background:var(--dsw-alias-bg-layer-2)}
+.kb-tree-row .kb-name{font-size:12.5px}
 `;
 
     function injectStyles() {
@@ -3183,9 +3188,9 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
       return lib ? { lib, path } : null;
     }
 
-    // 右栏「知识库」页：库 -> 目录 -> 文件，单栏浏览。
-    // 记住上次位置：切走标签页、组件被卸载后回来仍停在同一个文件。
-    const kbPaneMemory = { libId: '', dir: '', filePath: '' };
+    // 右栏「知识库」页：库 -> 目录树 -> 文件，目录在当前页展开。
+    // 记住上次展开状态与目录缓存：切走标签页、组件被卸载后回来仍停在同一处。
+    const kbPaneMemory = { libId: '', tree: {}, expanded: new Set() };
 
     function libraryAbsolutePath(root, rel) {
       const base = String(root || '').replaceAll('\\', '/').replace(/\/+$/, '');
@@ -3207,12 +3212,11 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
       const sessionId = props?.sessionId;
       const [libraries, setLibraries] = useState([]);
       const [libId, setLibId] = useState(kbPaneMemory.libId || '');
-      const [dir, setDir] = useState(kbPaneMemory.dir || '');
-      const [entries, setEntries] = useState([]);
-      const [loading, setLoading] = useState(false);
-      const [error, setError] = useState('');
-      const [file, setFile] = useState(null);
+      const [tree, setTree] = useState(kbPaneMemory.tree || {});
+      const [expanded, setExpanded] = useState(new Set(kbPaneMemory.expanded || []));
       const [booting, setBooting] = useState(true);
+      const [loadingRoot, setLoadingRoot] = useState(false);
+      const [error, setError] = useState('');
 
       const active = useMemo(() => libraries.find((row) => row.id === libId) ?? null, [libraries, libId]);
 
@@ -3240,37 +3244,143 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         };
       }, []);
 
-      const loadDir = useCallback(
-        async (libraryId, path) => {
-          if (!libraryId) return;
-          setLoading(true);
-          setError('');
-          try {
-            const payload = await getJson(`/api/kb/tree?lib=${encodeURIComponent(libraryId)}&path=${encodeURIComponent(path || '')}`);
-            setEntries(payload.entries ?? []);
-            setDir(path || '');
-            kbPaneMemory.libId = libraryId;
-            kbPaneMemory.dir = path || '';
-            kbPaneMemory.filePath = '';
-          } catch (cause) {
-            setError(errorText(cause));
-            setEntries([]);
-          } finally {
-            setLoading(false);
-          }
-        },
-        [],
-      );
+      useEffect(() => {
+        kbPaneMemory.tree = tree;
+      }, [tree]);
+      useEffect(() => {
+        kbPaneMemory.expanded = expanded;
+      }, [expanded]);
+
+      const loadTree = useCallback(async (libraryId, path) => {
+        if (!libraryId) return [];
+        const key = `${libraryId}:${path || ''}`;
+        try {
+          const payload = await getJson(
+            `/api/kb/tree?lib=${encodeURIComponent(libraryId)}&path=${encodeURIComponent(path || '')}`,
+          );
+          const list = payload.entries ?? [];
+          setTree((current) => ({ ...current, [key]: list }));
+          return list;
+        } catch (cause) {
+          setError(errorText(cause));
+          setTree((current) => ({ ...current, [key]: [] }));
+          return [];
+        }
+      }, []);
 
       useEffect(() => {
         if (!libId) return;
-        if (kbPaneMemory.libId === libId && kbPaneMemory.filePath) {
-          openFile(kbPaneMemory.filePath);
+        kbPaneMemory.libId = libId;
+        setLoadingRoot(true);
+        setError('');
+        loadTree(libId, '').finally(() => setLoadingRoot(false));
+      }, [libId, loadTree]);
+
+      const toggleDir = async (path) => {
+        const next = new Set(expanded);
+        if (next.has(path)) {
+          next.delete(path);
+        } else {
+          next.add(path);
+          if (!tree[`${libId}:${path}`]) await loadTree(libId, path);
+        }
+        setExpanded(next);
+      };
+
+      // 文件交给 DSH 自己的文档预览：新开一个右栏标签页，不在列表页里自绘。
+      const openEntry = (entry) => {
+        if (entry.type === 'dir') {
+          toggleDir(entry.path);
           return;
         }
-        setFile(null);
-        loadDir(libId, kbPaneMemory.dir || '');
-      }, [libId, loadDir]);
+        if (!sessionId) {
+          setError('当前没有可用的会话，无法打开文件预览。');
+          return;
+        }
+        const library = libraries.find((row) => row.id === libId);
+        const absolutePath = libraryAbsolutePath(library?.root, entry.path);
+        const address = sessionFileAddress(sessionId, absolutePath);
+        const right = safeGet('sidebarRight');
+        try {
+          if (right?.openResourceIn) {
+            right.openResourceIn(sessionId, address, { destination: 'sidebar' });
+            setError('');
+            return;
+          }
+          if (right?.openResource) {
+            right.openResource(address, { destination: 'sidebar' });
+            setError('');
+            return;
+          }
+        } catch (cause) {
+          reportClientError('preview:dsh', cause);
+          setError(errorText(cause));
+        }
+      };
+
+      const renderTree = (path, depth) => {
+        const key = `${libId}:${path || ''}`;
+        const entries = tree[key];
+        if (!entries) {
+          return h(
+            'div',
+            { className: 'kb-tree-skeleton', style: { paddingLeft: `${8 + depth * 14}px` } },
+            h('i', { style: { width: '78%' } }),
+            h('i', { style: { width: '62%' } }),
+            h('i', { style: { width: '70%' } }),
+          );
+        }
+        if (!entries.length && !path) {
+          return h('div', { className: 'kb-hint', style: { padding: '10px 12px' } }, '这个目录是空的');
+        }
+        return entries.map((entry) => {
+          if (entry.type === 'dir') {
+            const open = expanded.has(entry.path);
+            return h(
+              React.Fragment,
+              { key: entry.path },
+              h(
+                'div',
+                {
+                  className: cx('kb-file-item', 'kb-tree-row'),
+                  style: { paddingLeft: `${6 + depth * 14}px` },
+                  onClick: () => toggleDir(entry.path),
+                  title: entry.path,
+                },
+                h(
+                  'span',
+                  { className: 'kb-caret', style: { display: 'inline-flex', justifyContent: 'center' } },
+                  h(Icon, { name: 'chevron', size: 12, className: open ? 'kb-chev' : 'kb-chev-closed' }),
+                ),
+                h(
+                  'span',
+                  { className: cx('kb-row-icon', dirIconName(entry.name)) },
+                  h(Icon, { name: dirIconName(entry.name), size: 16 }),
+                ),
+                h('span', { className: 'kb-name' }, entry.name),
+              ),
+              open ? renderTree(entry.path, depth + 1) : null,
+            );
+          }
+          return h(
+            'div',
+            {
+              key: entry.path,
+              className: cx('kb-file-item', 'kb-tree-row'),
+              style: { paddingLeft: `${6 + depth * 14 + 20}px` },
+              onClick: () => openEntry(entry),
+              title: entry.path,
+            },
+            h(
+              'span',
+              { className: cx('kb-row-icon', fileIconName(entry.name)) },
+              h(Icon, { name: fileIconName(entry.name), size: 16 }),
+            ),
+            h('span', { className: 'kb-name' }, entry.name),
+            h('span', { className: 'kb-meta' }, formatBytes(entry.size)),
+          );
+        });
+      };
 
       if (booting) {
         return h(
@@ -3285,78 +3395,6 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         );
       }
 
-      const openFile = async (path) => {
-        setLoading(true);
-        setError('');
-        try {
-          const payload = await getJson(`/api/kb/file?lib=${encodeURIComponent(libId)}&path=${encodeURIComponent(path)}`);
-          setFile(payload);
-          kbPaneMemory.libId = libId;
-          kbPaneMemory.dir = parentDir(payload.path);
-          kbPaneMemory.filePath = payload.path;
-        } catch (cause) {
-          setError(errorText(cause));
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      const closeFile = () => {
-        setFile(null);
-        kbPaneMemory.filePath = '';
-        loadDir(libId, kbPaneMemory.dir || '');
-      };
-
-      // 文件一律交给 DSH 自己的文档预览：新建一个右栏标签页，不在这里自绘。
-      const openEntry = (entry) => {
-        if (entry.type === 'dir') {
-          loadDir(libId, entry.path);
-          return;
-        }
-        const library = libraries.find((row) => row.id === libId);
-        const absolutePath = libraryAbsolutePath(library?.root, entry.path);
-        const address = sessionId ? sessionFileAddress(sessionId, absolutePath) : '';
-        const right = safeGet('sidebarRight');
-        if (address && right) {
-          try {
-            if (typeof right.openResourceIn === 'function') {
-              right.openResourceIn(sessionId, address, { destination: 'sidebar' });
-              return;
-            }
-            if (typeof right.openResource === 'function') {
-              right.openResource(address, { destination: 'sidebar' });
-              return;
-            }
-          } catch (cause) {
-            reportClientError('preview:dsh', cause);
-          }
-        }
-        // 没有会话或右栏服务时退回内置预览（正常右栏场景不会走到这里）。
-        openFile(entry.path);
-      };
-
-      const crumbs = (() => {
-        const parts = String(dir || '').split('/').filter(Boolean);
-        const chips = [
-          h(
-            'button',
-            { key: 'root', type: 'button', className: 'kb-crumb', onClick: () => loadDir(libId, '') },
-            active ? active.name : '知识库',
-          ),
-        ];
-        parts.forEach((part, index) => {
-          const target = parts.slice(0, index + 1).join('/');
-          chips.push(
-            h(
-              'button',
-              { key: target, type: 'button', className: 'kb-crumb', onClick: () => loadDir(libId, target) },
-              part,
-            ),
-          );
-        });
-        return chips;
-      })();
-
       const head = h(
         'div',
         { className: 'kb-pane-head' },
@@ -3366,12 +3404,14 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
               {
                 className: 'kb-select',
                 value: libId,
+                title: active?.root,
                 onChange: (event) => {
                   const nextId = event.target.value;
                   kbPaneMemory.libId = nextId;
-                  kbPaneMemory.dir = '';
-                  kbPaneMemory.filePath = '';
-                  setFile(null);
+                  kbPaneMemory.tree = {};
+                  kbPaneMemory.expanded = new Set();
+                  setTree({});
+                  setExpanded(new Set());
                   setLibId(nextId);
                 },
               },
@@ -3379,12 +3419,27 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
             )
           : h('span', { className: 'kb-hint' }, '还没有知识库'),
         h(IconButton, {
-          icon: 'up',
-          label: '上一级',
-          disabled: !dir,
-          onClick: () => loadDir(libId, parentDir(dir)),
+          icon: 'refresh',
+          label: '刷新',
+          disabled: !libId,
+          onClick: () => {
+            setTree((current) => {
+              const next = { ...current };
+              for (const key of Object.keys(next)) {
+                if (key.startsWith(`${libId}:`)) delete next[key];
+              }
+              return next;
+            });
+            setLoadingRoot(true);
+            loadTree(libId, '').finally(() => setLoadingRoot(false));
+          },
         }),
-        h(IconButton, { icon: 'refresh', label: '刷新', disabled: !libId, onClick: () => loadDir(libId, dir) }),
+        h(IconButton, {
+          icon: 'chevron',
+          label: '全部收起',
+          disabled: !expanded.size,
+          onClick: () => setExpanded(new Set()),
+        }),
         h('span', { className: 'kb-spacer' }),
         h(IconButton, {
           icon: 'right',
@@ -3399,68 +3454,15 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
         }),
       );
 
-      if (file) {
-        return h(
-          'div',
-          { className: 'kb-pane' },
-          h(
-            'div',
-            { className: 'kb-pane-head' },
-            h(IconButton, { icon: 'up', label: '返回目录', onClick: closeFile }),
-            h('span', { className: 'kb-file-path', title: file.path }, file.path),
-            h('span', { className: 'kb-spacer' }),
-            h(IconButton, {
-              icon: 'refresh',
-              label: '重新读取',
-              onClick: () => openFile(file.path),
-            }),
-          ),
-          h(
-            'div',
-            { className: 'kb-pane-doc' },
-            h(
-              'div',
-              { className: 'kb-doc-pad' },
-              h(FilePreview, { libId, path: file.path, file, onOpenLink: openFile }),
-            ),
-          ),
-        );
-      }
-
       return h(
         'div',
         { className: 'kb-pane' },
         head,
-        h('div', { className: 'kb-pane-head', style: { borderTop: '0' } }, h('div', { className: 'kb-crumbs' }, ...crumbs)),
-        error ? h('div', { className: 'kb-hint', style: { padding: '0 12px 8px' } }, error) : null,
+        error ? h('div', { className: 'kb-hint', style: { padding: '2px 10px 6px' } }, error) : null,
         h(
           'div',
           { className: 'kb-pane-body' },
-          loading ? h(Skeleton, { lines: 5 }) : null,
-          !loading && !entries.length ? h('div', { className: 'kb-hint' }, '这个目录是空的') : null,
-          ...entries.map((entry) =>
-            h(
-              'div',
-              {
-                key: entry.path,
-                className: 'kb-file-item',
-                onClick: () => openEntry(entry),
-                title: entry.path,
-              },
-              h(
-                'span',
-                {
-                  className: cx(
-                    'kb-row-icon',
-                    entry.type === 'dir' ? dirIconName(entry.name) : fileIconName(entry.name),
-                  ),
-                },
-                h(Icon, { name: entry.type === 'dir' ? dirIconName(entry.name) : fileIconName(entry.name), size: 16 }),
-              ),
-              h('span', { className: 'kb-name' }, entry.name),
-              h('span', { className: 'kb-meta' }, entry.type === 'dir' ? '' : formatBytes(entry.size)),
-            ),
-          ),
+          loadingRoot && !tree[`${libId}:`] ? h(Skeleton, { lines: 5 }) : renderTree('', 0),
         ),
       );
     }
@@ -3535,6 +3537,16 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
           { className: 'kb-content', style: { padding: 0, overflow: 'auto' } },
           h('div', { className: 'kb-doc-pad' }, h(FilePreview, { libId: parsed.lib, path: file.path, file })),
         ),
+      );
+    }
+
+    // 右栏标签页标题：图标 + 名称，和 DSH 其它标签页一致（图标与文字同一行居中）。
+    function KbPaneTitle() {
+      return h(
+        React.Fragment,
+        null,
+        h(Icon, { name: 'library', size: 16, className: 'kb-tab-icon' }),
+        '知识库',
       );
     }
 
@@ -3714,6 +3726,9 @@ button.kb-chip:disabled{opacity:.6;cursor:default}
             );
             ctx.slots.inject('sidebar.right.pane.tab', () =>
               ctx.slots.register({ name: 'sidebar.right.pane.tab', key: KB_PAGE_ID }, KbBrowserPane),
+            );
+            ctx.slots.inject('sidebar.right.pane.tab.title', () =>
+              ctx.slots.register({ name: 'sidebar.right.pane.tab.title', key: KB_PAGE_ID }, KbPaneTitle),
             );
           } catch (error) {
             reportClientError('register:tab-body', error);
